@@ -1,0 +1,17 @@
+{
+  "description": "Reference configuration matching the GUI's obvious repeating burst-loss demo",
+  "transport": {
+    "drop_pct": 0.0,
+    "burst_enabled": true,
+    "burst_drop_packets": 250,
+    "burst_every_packets": 2500,
+    "blackout": false,
+    "duplicate_pct": 0.0,
+    "fixed_delay_ms": 0.0,
+    "jitter_ms": 0.0,
+    "reorder_pct": 0.0,
+    "reorder_window": 4,
+    "throttle_pps": 0.0
+  },
+  "effect_at_bx01_nominal_rate": "~0.5 second outage every ~5 seconds"
+}

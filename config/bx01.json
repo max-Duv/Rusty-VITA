@@ -1,0 +1,23 @@
+{
+  "name": "RS-34 Bx01",
+  "broadcaster": "174.168.1.189",
+  "source_mac": "7c:c2:55:ea:e4:93",
+  "multicast_group": "239.254.253.252",
+  "multicast_mac": "01:00:5e:7e:fd:fc",
+  "destination_udp_port": 52101,
+  "source_udp_port": 60739,
+  "capture_interface": "bridge0",
+  "physical_ingress": "enp4s0f0",
+  "ttl": 1,
+  "stream_id": "0x42783031",
+  "stream_id_ascii": "Bx01",
+  "class_id": "0x004f505452577834",
+  "packet_bytes": 2032,
+  "udp_bytes_with_header": 2040,
+  "payload_bytes": 2000,
+  "sample_format": "be-i32",
+  "sample_rate": 250000,
+  "samples_per_packet": 500,
+  "nominal_packets_per_second": 500,
+  "fragmentation": "2 IPv4 fragments per UDP datagram (~1480 + ~560 IP payload bytes)"
+}

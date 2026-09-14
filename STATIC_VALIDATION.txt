@@ -1,0 +1,21 @@
+Static validation for v0.2 detected-emitter clone build
+
+src/capture.rs: balanced
+src/chaos.rs: balanced
+src/cli.rs: balanced
+src/dsp.rs: balanced
+src/emit.rs: balanced
+src/gui.rs: balanced
+src/logging.rs: balanced
+src/main.rs: balanced
+src/metrics.rs: balanced
+src/profile.rs: balanced
+src/scenario.rs: balanced
+src/state.rs: balanced
+src/vita49.rs: balanced
+src/worker.rs: balanced
+
+TOML/JSON parse: OK
+Shell bash -n: OK
+Accidental literal \\n scan in Rust source: OK
+Packaging environment note: cargo/rustc/rustfmt are not installed here; run ./scripts/check.sh on RS5 as the authoritative compile/test gate.

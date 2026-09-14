@@ -1,0 +1,15 @@
+Static validation — VITA-49 Chaos Workbench v0.3 RF Scene Console
+
+Validated in the artifact environment:
+- Cargo.toml parses and package version is 0.3.0.
+- config/bx01.json parses.
+- config/example_experiment.json parses.
+- All 10 shell scripts pass `bash -n`.
+- All 14 Rust source files pass lexical delimiter/comment/string balance scanning.
+- New GUI central workspace uses a vertical scroll area to avoid clipping at smaller/RDP viewports.
+- New emitter-clone controls/presets are represented in SignalConfig, scenario presets, GUI controls, engine stats, and documentation.
+
+Rust compiler note:
+`cargo`, `rustc`, and `rustfmt` are not installed in this artifact-generation environment. Run
+`./scripts/check.sh` on RS5 as the authoritative compiler + test gate, then
+`./scripts/build_rhel8.sh` for the optimized binary.

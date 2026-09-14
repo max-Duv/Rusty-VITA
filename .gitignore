@@ -1,0 +1,7 @@
+/target/
+/logs/*.jsonl
+*.pcap
+*.pcapng
+.DS_Store
+
+.mcp_audit.log

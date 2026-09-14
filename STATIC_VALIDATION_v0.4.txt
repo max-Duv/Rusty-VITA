@@ -1,0 +1,17 @@
+VITA-49 Chaos Workbench v0.4 static validation
+Date: 2026-09-13
+
+[PASS] Cargo.toml parses as TOML
+[PASS] config JSON parses
+[PASS] all shell scripts pass bash -n
+[PASS] Rust source lexical delimiter/string/comment scan
+[PASS] production CLI/source contains no demo/synthetic packet source
+[PASS] no hard-coded mock dashboard telemetry found
+[PASS] selected UI reference bundled in docs/operator_workstation_reference.png
+
+Rust source lines: 5192
+Rust unit tests: 11
+Shell scripts: 8
+
+[NOT RUN] cargo fmt/check/test/build: cargo/rustc are unavailable in this artifact-generation container.
+Authoritative RS5 gate: ./scripts/check.sh && ./scripts/build_rhel8.sh
