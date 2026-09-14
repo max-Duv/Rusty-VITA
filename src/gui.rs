@@ -75,11 +75,46 @@ struct PlannedGhost {
     level_dbfs: f64,
 }
 
+#[derive(Clone, Copy)]
+struct LayoutMetrics {
+    left_w: f32,
+    right_w: f32,
+    top_h: f32,
+    footer_h: f32,
+}
+
+fn layout_metrics(ctx: &egui::Context) -> LayoutMetrics {
+    let rect = ctx.screen_rect();
+    let w = rect.width();
+    let h = rect.height();
+
+    // All values are egui logical points, not physical pixels. This is
+    // intentional: GNOME/RDP can present a 1920px desktop as only ~1250–1500
+    // logical points. Fixed 292/318 point rails plus a 1360 point minimum
+    // viewport caused the v0.5 fullscreen clipping seen on RS5.
+    let (left_w, right_w) = if w < 1250.0 {
+        (220.0, 225.0)
+    } else if w < 1500.0 {
+        (245.0, 255.0)
+    } else if w < 1750.0 {
+        (270.0, 290.0)
+    } else {
+        (292.0, 318.0)
+    };
+
+    LayoutMetrics {
+        left_w,
+        right_w,
+        top_h: if h < 800.0 { 80.0 } else if h < 950.0 { 86.0 } else { 92.0 },
+        footer_h: if h < 800.0 { 26.0 } else { 30.0 },
+    }
+}
+
 pub fn run(cfg: ResolvedConfig) -> Result<()> {
     let native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1760.0, 1040.0])
-            .with_min_inner_size([1360.0, 820.0]),
+            .with_inner_size([1440.0, 860.0])
+            .with_min_inner_size([980.0, 680.0]),
         ..Default::default()
     };
     let title = format!("VITA-49 RF Chaos Workbench — {}", cfg.stream.name);
@@ -216,8 +251,8 @@ impl WorkbenchApp {
             return;
         }
 
-        let clean_advanced = self.latest.clean.packets > self.last_clean_packets;
-        let chaos_advanced = self.latest.chaos.packets > self.last_chaos_packets;
+        let clean_advanced = self.latest.clean.data_packets > self.last_clean_packets;
+        let chaos_advanced = self.latest.chaos.data_packets > self.last_chaos_packets;
         let output_present = chaos_advanced;
 
         if self.prev_worker_active && !self.latest.active {
@@ -276,8 +311,8 @@ impl WorkbenchApp {
             }
         }
 
-        self.last_clean_packets = self.latest.clean.packets;
-        self.last_chaos_packets = self.latest.chaos.packets;
+        self.last_clean_packets = self.latest.clean.data_packets;
+        self.last_chaos_packets = self.latest.chaos.data_packets;
     }
 
     fn update_waterfall_texture(&mut self, ctx: &egui::Context) {
@@ -404,7 +439,7 @@ impl WorkbenchApp {
 
     fn top_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("operator_header")
-            .exact_height(92.0)
+            .exact_height(layout_metrics(ctx).top_h)
             .frame(
                 egui::Frame::none()
                     .fill(Color32::from_rgb(4, 12, 18))
@@ -523,7 +558,7 @@ impl WorkbenchApp {
 
     fn bottom_bar(&self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("operator_footer")
-            .exact_height(30.0)
+            .exact_height(layout_metrics(ctx).footer_h)
             .frame(
                 egui::Frame::none()
                     .fill(Color32::from_rgb(4, 11, 16))
@@ -584,11 +619,12 @@ impl WorkbenchApp {
     }
 
     fn left_panel(&mut self, ctx: &egui::Context) {
+        let layout = layout_metrics(ctx);
         egui::SidePanel::left("operator_controls")
-            .resizable(false)
-            .default_width(292.0)
-            .min_width(292.0)
-            .max_width(292.0)
+            .resizable(true)
+            .default_width(layout.left_w)
+            .min_width((layout.left_w - 28.0).max(205.0))
+            .max_width(layout.left_w + 42.0)
             .frame(
                 egui::Frame::none()
                     .fill(Color32::from_rgb(6, 15, 21))
@@ -632,11 +668,12 @@ impl WorkbenchApp {
     }
 
     fn right_panel(&mut self, ctx: &egui::Context) {
+        let layout = layout_metrics(ctx);
         egui::SidePanel::right("operator_health_rail")
-            .resizable(false)
-            .default_width(318.0)
-            .min_width(318.0)
-            .max_width(318.0)
+            .resizable(true)
+            .default_width(layout.right_w)
+            .min_width((layout.right_w - 30.0).max(205.0))
+            .max_width(layout.right_w + 46.0)
             .frame(
                 egui::Frame::none()
                     .fill(Color32::from_rgb(6, 15, 21))
@@ -857,6 +894,7 @@ impl WorkbenchApp {
         health_kv(ui, "Memory", self.latest.process.memory_bytes.map(human_bytes).unwrap_or_else(|| "—".into()));
         health_kv(ui, "Queue depth", self.latest.source.queue_depth.to_string());
         health_kv(ui, "Dropped packets", self.latest.engine.dropped.to_string());
+        health_kv(ui, "VITA packets", if self.latest.clean.packets > 0 { format!("{} data / {} context", self.latest.clean.data_packets, self.latest.clean.context_packets) } else { "—".into() });
         health_kv(ui, "Parse errors", if self.latest.clean.packets > 0 { self.latest.clean.parse_errors.to_string() } else { "—".into() });
         health_kv(
             ui,
@@ -965,33 +1003,84 @@ impl WorkbenchApp {
     }
 
     fn metrics_row(&self, ui: &mut egui::Ui) {
-        let width = ui.available_width();
-        let gap = 8.0;
-        let w = ((width - gap * 5.0) / 6.0).max(122.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            metric_card(ui, w, "CLEAN PPS", value_or_dash(self.latest.clean.pps, self.latest.clean.packets > 0, 1), GREEN, &self.clean_pps_history);
-            metric_card(ui, w, "CHAOS PPS", value_or_dash(self.latest.chaos.pps, self.latest.chaos.packets > 0, 1), BLUE, &self.chaos_pps_history);
-            metric_card(ui, w, "PPS DELTA", if self.latest.clean.packets > 0 { format!("{:+.1}%", pps_delta(self.latest.clean.pps, self.latest.chaos.pps)) } else { "—".into() }, CYAN, &self.delta_history);
-            metric_card(ui, w, "SEQ GAPS", if self.latest.chaos.packets > 0 { self.latest.chaos.seq_gaps.to_string() } else { "—".into() }, if self.latest.chaos.seq_gaps == 0 { BLUE } else { AMBER }, &self.seq_history);
-            metric_card(ui, w, "TS / GLITCH", if self.latest.chaos.packets > 0 { format!("{} / {}", self.latest.chaos.ts_drops, self.latest.chaos.glitches) } else { "—".into() }, if self.latest.chaos.ts_drops + self.latest.chaos.glitches == 0 { BLUE } else { AMBER }, &self.timing_history);
-            metric_card(ui, w, "PARSE ERR", if self.latest.chaos.packets > 0 { self.latest.chaos.parse_errors.to_string() } else { "—".into() }, if self.latest.chaos.parse_errors == 0 { BLUE } else { RED }, &self.parse_history);
-        });
+        let compact = ui.available_width() < 910.0;
+        if compact {
+            ui.columns(3, |cols| {
+                let w0 = cols[0].available_width();
+                let w1 = cols[1].available_width();
+                let w2 = cols[2].available_width();
+                metric_card(&mut cols[0], w0, "CLEAN PPS", value_or_dash(self.latest.clean.pps, self.latest.clean.packets > 0, 1), GREEN, &self.clean_pps_history);
+                metric_card(&mut cols[1], w1, "CHAOS PPS", value_or_dash(self.latest.chaos.pps, self.latest.chaos.packets > 0, 1), BLUE, &self.chaos_pps_history);
+                metric_card(&mut cols[2], w2, "PPS DELTA", if self.latest.clean.packets > 0 { format!("{:+.1}%", pps_delta(self.latest.clean.pps, self.latest.chaos.pps)) } else { "—".into() }, CYAN, &self.delta_history);
+            });
+            ui.add_space(6.0);
+            ui.columns(3, |cols| {
+                let w0 = cols[0].available_width();
+                let w1 = cols[1].available_width();
+                let w2 = cols[2].available_width();
+                metric_card(&mut cols[0], w0, "SEQ GAPS", if self.latest.chaos.packets > 0 { self.latest.chaos.seq_gaps.to_string() } else { "—".into() }, if self.latest.chaos.seq_gaps == 0 { BLUE } else { AMBER }, &self.seq_history);
+                metric_card(&mut cols[1], w1, "TS / GLITCH", if self.latest.chaos.packets > 0 { format!("{} / {}", self.latest.chaos.ts_drops, self.latest.chaos.glitches) } else { "—".into() }, if self.latest.chaos.ts_drops + self.latest.chaos.glitches == 0 { BLUE } else { AMBER }, &self.timing_history);
+                metric_card(&mut cols[2], w2, "PARSE ERR", if self.latest.chaos.packets > 0 { self.latest.chaos.parse_errors.to_string() } else { "—".into() }, if self.latest.chaos.parse_errors == 0 { BLUE } else { RED }, &self.parse_history);
+            });
+        } else {
+            ui.columns(6, |cols| {
+                let widths = [
+                    cols[0].available_width(), cols[1].available_width(), cols[2].available_width(),
+                    cols[3].available_width(), cols[4].available_width(), cols[5].available_width(),
+                ];
+                metric_card(&mut cols[0], widths[0], "CLEAN PPS", value_or_dash(self.latest.clean.pps, self.latest.clean.packets > 0, 1), GREEN, &self.clean_pps_history);
+                metric_card(&mut cols[1], widths[1], "CHAOS PPS", value_or_dash(self.latest.chaos.pps, self.latest.chaos.packets > 0, 1), BLUE, &self.chaos_pps_history);
+                metric_card(&mut cols[2], widths[2], "PPS DELTA", if self.latest.clean.packets > 0 { format!("{:+.1}%", pps_delta(self.latest.clean.pps, self.latest.chaos.pps)) } else { "—".into() }, CYAN, &self.delta_history);
+                metric_card(&mut cols[3], widths[3], "SEQ GAPS", if self.latest.chaos.packets > 0 { self.latest.chaos.seq_gaps.to_string() } else { "—".into() }, if self.latest.chaos.seq_gaps == 0 { BLUE } else { AMBER }, &self.seq_history);
+                metric_card(&mut cols[4], widths[4], "TS / GLITCH", if self.latest.chaos.packets > 0 { format!("{} / {}", self.latest.chaos.ts_drops, self.latest.chaos.glitches) } else { "—".into() }, if self.latest.chaos.ts_drops + self.latest.chaos.glitches == 0 { BLUE } else { AMBER }, &self.timing_history);
+                metric_card(&mut cols[5], widths[5], "PARSE ERR", if self.latest.chaos.packets > 0 { self.latest.chaos.parse_errors.to_string() } else { "—".into() }, if self.latest.chaos.parse_errors == 0 { BLUE } else { RED }, &self.parse_history);
+            });
+        }
     }
 
     fn monitor_view(&mut self, ui: &mut egui::Ui) {
         self.analysis_tabs(ui);
-        ui.add_space(8.0);
-        instrument_panel(ui, "RF WATERFALL / LIVE SPECTRAL HISTORY", CYAN, |ui| self.waterfall_panel(ui));
+        ui.add_space(7.0);
+
+        // Fit the primary operator view to the currently available viewport.
+        // v0.5 used fixed plot heights, which looked acceptable in screenshots
+        // but forced the bottom row below the fold on RS5 when GNOME/RDP DPI
+        // scaling reduced the number of logical egui points available.
+        let usable_h = ui.available_height().max(300.0);
+        let (waterfall_outer, middle_outer) = if usable_h < 520.0 {
+            (
+                (usable_h * 0.38).clamp(140.0, 205.0),
+                (usable_h * 0.34).clamp(130.0, 185.0),
+            )
+        } else {
+            (
+                (usable_h * 0.39).clamp(190.0, 330.0),
+                (usable_h * 0.34).clamp(175.0, 285.0),
+            )
+        };
+        let bottom_outer = (usable_h - waterfall_outer - middle_outer - 16.0).max(70.0);
+        let waterfall_inner = (waterfall_outer - 78.0).max(78.0);
+        let plot_inner = (middle_outer - 58.0).max(72.0);
+        let table_inner = (bottom_outer - 66.0).max(36.0);
+
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), waterfall_outer),
+            egui::Layout::top_down(Align::Min),
+            |ui| instrument_panel(ui, "RF WATERFALL / LIVE SPECTRAL HISTORY", CYAN, |ui| self.waterfall_panel(ui, waterfall_inner)),
+        );
         ui.add_space(8.0);
         ui.columns(2, |cols| {
-            instrument_panel(&mut cols[0], "SPECTRUM", BLUE, |ui| self.spectrum_panel(ui));
-            instrument_panel(&mut cols[1], "TIME DOMAIN", GREEN, |ui| self.waveform_panel(ui));
+            cols[0].set_min_height(middle_outer);
+            cols[1].set_min_height(middle_outer);
+            instrument_panel(&mut cols[0], "SPECTRUM", BLUE, |ui| self.spectrum_panel(ui, plot_inner));
+            instrument_panel(&mut cols[1], "TIME DOMAIN", GREEN, |ui| self.waveform_panel(ui, plot_inner));
         });
         ui.add_space(8.0);
         ui.columns(2, |cols| {
-            instrument_panel(&mut cols[0], "EMITTER / SOURCE TABLE", CYAN, |ui| self.source_table_panel(ui));
-            instrument_panel(&mut cols[1], "CLEAN ↔ CHAOS COMPARISON", MAGENTA, |ui| self.comparison_panel(ui));
+            cols[0].set_min_height(bottom_outer);
+            cols[1].set_min_height(bottom_outer);
+            instrument_panel(&mut cols[0], "EMITTER / SOURCE TABLE", CYAN, |ui| self.source_table_panel(ui, table_inner));
+            instrument_panel(&mut cols[1], "CLEAN ↔ CHAOS COMPARISON", MAGENTA, |ui| self.comparison_panel(ui, table_inner));
         });
     }
 
@@ -1019,7 +1108,7 @@ impl WorkbenchApp {
             });
     }
 
-    fn waterfall_panel(&mut self, ui: &mut egui::Ui) {
+    fn waterfall_panel(&mut self, ui: &mut egui::Ui, plot_h: f32) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("LIVE").size(9.5).strong().color(GREEN));
             ui.separator();
@@ -1045,7 +1134,7 @@ impl WorkbenchApp {
 
         let available = ui.available_width();
         let legend_w = 50.0;
-        let h = 248.0;
+        let h = plot_h;
         ui.horizontal(|ui| {
             if let Some(tex) = &self.waterfall_tex {
                 egui::Frame::none()
@@ -1086,7 +1175,7 @@ impl WorkbenchApp {
         });
     }
 
-    fn spectrum_panel(&self, ui: &mut egui::Ui) {
+    fn spectrum_panel(&self, ui: &mut egui::Ui, plot_h: f32) {
         let clean = &self.latest.analysis.clean_spectrum;
         let chaos = &self.latest.analysis.chaos_spectrum;
         let noise_floor = median_finite(&clean.dbfs);
@@ -1112,7 +1201,7 @@ impl WorkbenchApp {
         });
 
         Plot::new("operator_spectrum")
-            .height(238.0)
+            .height(plot_h)
             .legend(Legend::default())
             .x_axis_label("Frequency (kHz)")
             .y_axis_label("Magnitude (dBFS)")
@@ -1141,7 +1230,7 @@ impl WorkbenchApp {
             });
     }
 
-    fn waveform_panel(&self, ui: &mut egui::Ui) {
+    fn waveform_panel(&self, ui: &mut egui::Ui, plot_h: f32) {
         let clean = waveform_trace(&self.latest.clean_recent, self.cfg.stream.sample_rate, self.waveform_ms, 1200);
         let chaos = waveform_trace(&self.latest.chaos_recent, self.cfg.stream.sample_rate, self.waveform_ms, 1200);
         let peak = waveform_peak(&clean).max(waveform_peak(&chaos));
@@ -1159,7 +1248,7 @@ impl WorkbenchApp {
         });
 
         Plot::new("operator_waveform")
-            .height(238.0)
+            .height(plot_h)
             .legend(Legend::default())
             .x_axis_label("Time (ms)")
             .y_axis_label("Sample amplitude")
@@ -1175,7 +1264,7 @@ impl WorkbenchApp {
             });
     }
 
-    fn source_table_panel(&mut self, ui: &mut egui::Ui) {
+    fn source_table_panel(&mut self, ui: &mut egui::Ui, table_h: f32) {
         ui.horizontal(|ui| {
             ui.label(RichText::new(format!("{} tracked sources", self.latest.analysis.emitters.len())).small().monospace().color(MUTED));
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
@@ -1188,7 +1277,7 @@ impl WorkbenchApp {
             source_tab(ui, &mut self.source_table_tab, SourceTableTab::Suppressed, "SUPPRESSED");
         });
         ui.separator();
-        egui::ScrollArea::vertical().max_height(185.0).show(ui, |ui| {
+        egui::ScrollArea::vertical().max_height(table_h).show(ui, |ui| {
             match self.source_table_tab {
                 SourceTableTab::Active => self.active_source_table(ui),
                 SourceTableTab::Planned => self.planned_source_table(ui),
@@ -1246,27 +1335,29 @@ impl WorkbenchApp {
         }
     }
 
-    fn comparison_panel(&self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("LIVE CLEAN ↔ CHAOS DELTAS").size(9.5).strong().color(MUTED));
-        egui::Grid::new("comparison_grid").striped(true).min_col_width(76.0).show(ui, |ui| {
-            ui.strong("Metric");
-            ui.strong("Clean");
-            ui.strong("Chaos");
-            ui.strong("Delta");
-            ui.end_row();
-            comparison_row(ui, "Total Power (dBFS)", self.latest.analysis.comparison.clean.total_power_dbfs, self.latest.analysis.comparison.chaos.total_power_dbfs, "dB");
-            comparison_row(ui, "Occupied BW (kHz)", self.latest.analysis.comparison.clean.occupied_bw_khz, self.latest.analysis.comparison.chaos.occupied_bw_khz, "kHz");
-            comparison_row(ui, "Peak (dBFS)", self.latest.analysis.comparison.clean.peak_dbfs, self.latest.analysis.comparison.chaos.peak_dbfs, "dB");
-            comparison_row(ui, "Spectral Flatness", self.latest.analysis.comparison.clean.spectral_flatness, self.latest.analysis.comparison.chaos.spectral_flatness, "");
-        });
-        ui.add_space(6.0);
-        ui.horizontal_wrapped(|ui| {
-            counter_chip(ui, "seen", self.latest.engine.seen);
-            counter_chip(ui, "emitted", self.latest.engine.emitted);
-            counter_chip(ui, "dropped", self.latest.engine.dropped);
-            counter_chip(ui, "mutated", self.latest.engine.mutated);
-            counter_chip(ui, "reordered", self.latest.engine.reordered);
-            counter_chip(ui, "ghosts", self.latest.engine.emitter_clones);
+    fn comparison_panel(&self, ui: &mut egui::Ui, panel_h: f32) {
+        egui::ScrollArea::vertical().max_height(panel_h).auto_shrink([false, false]).show(ui, |ui| {
+            ui.label(RichText::new("LIVE CLEAN ↔ CHAOS DELTAS").size(9.5).strong().color(MUTED));
+            egui::Grid::new("comparison_grid").striped(true).min_col_width(76.0).show(ui, |ui| {
+                ui.strong("Metric");
+                ui.strong("Clean");
+                ui.strong("Chaos");
+                ui.strong("Delta");
+                ui.end_row();
+                comparison_row(ui, "Total Power (dBFS)", self.latest.analysis.comparison.clean.total_power_dbfs, self.latest.analysis.comparison.chaos.total_power_dbfs, "dB");
+                comparison_row(ui, "Occupied BW (kHz)", self.latest.analysis.comparison.clean.occupied_bw_khz, self.latest.analysis.comparison.chaos.occupied_bw_khz, "kHz");
+                comparison_row(ui, "Peak (dBFS)", self.latest.analysis.comparison.clean.peak_dbfs, self.latest.analysis.comparison.chaos.peak_dbfs, "dB");
+                comparison_row(ui, "Spectral Flatness", self.latest.analysis.comparison.clean.spectral_flatness, self.latest.analysis.comparison.chaos.spectral_flatness, "");
+            });
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                counter_chip(ui, "seen", self.latest.engine.seen);
+                counter_chip(ui, "emitted", self.latest.engine.emitted);
+                counter_chip(ui, "dropped", self.latest.engine.dropped);
+                counter_chip(ui, "mutated", self.latest.engine.mutated);
+                counter_chip(ui, "reordered", self.latest.engine.reordered);
+                counter_chip(ui, "ghosts", self.latest.engine.emitter_clones);
+            });
         });
     }
 
@@ -1292,6 +1383,8 @@ impl WorkbenchApp {
                 health_metric_row(ui, "Packets/s", Some(self.latest.clean.pps), Some(self.latest.chaos.pps));
                 health_metric_row(ui, "Samples/s", Some(self.latest.clean.samples_per_sec), Some(self.latest.chaos.samples_per_sec));
                 health_metric_row(ui, "Mbps", Some(self.latest.clean.mbps), Some(self.latest.chaos.mbps));
+                health_count_row(ui, "Data packets", self.latest.clean.data_packets, self.latest.chaos.data_packets);
+                health_count_row(ui, "Context packets", self.latest.clean.context_packets, self.latest.chaos.context_packets);
                 health_count_row(ui, "Sequence gaps", self.latest.clean.seq_gaps, self.latest.chaos.seq_gaps);
                 health_count_row(ui, "Reorders", self.latest.clean.reorders, self.latest.chaos.reorders);
                 health_count_row(ui, "Timestamp drops", self.latest.clean.ts_drops, self.latest.chaos.ts_drops);
@@ -1374,13 +1467,15 @@ impl eframe::App for WorkbenchApp {
                         });
                     ui.add_space(6.0);
                 }
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    match self.workspace {
-                        Workspace::Monitor | Workspace::Live => self.monitor_view(ui),
-                        Workspace::Health => self.health_view(ui),
-                        Workspace::Events => self.events_view(ui),
+                match self.workspace {
+                    Workspace::Monitor | Workspace::Live => self.monitor_view(ui),
+                    Workspace::Health => {
+                        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| self.health_view(ui));
                     }
-                });
+                    Workspace::Events => {
+                        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| self.events_view(ui));
+                    }
+                }
             });
         ctx.request_repaint_after(Duration::from_millis(100));
     }

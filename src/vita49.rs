@@ -119,6 +119,30 @@ impl VrtFrame {
         })
     }
 
+    /// VITA-49 packet types 0..=3 carry sample/data payloads.
+    pub fn is_data_packet(&self) -> bool {
+        matches!(self.packet_type, 0..=3)
+    }
+
+    /// VITA-49 packet types 4 and 5 are context packets, not sample payloads.
+    pub fn is_context_packet(&self) -> bool {
+        matches!(self.packet_type, 4 | 5)
+    }
+
+    pub fn packet_type_name(&self) -> &'static str {
+        match self.packet_type {
+            0 => "IF data (no Stream ID)",
+            1 => "IF data (Stream ID)",
+            2 => "Ext data (no Stream ID)",
+            3 => "Ext data (Stream ID)",
+            4 => "IF context",
+            5 => "Ext context",
+            6 => "Command",
+            7 => "Extension command",
+            _ => "reserved",
+        }
+    }
+
     pub fn stream_id(&self) -> Option<u32> {
         self.stream_id_offset.and_then(|o| read_be_u32(&self.raw, o))
     }
@@ -297,6 +321,28 @@ pub fn build_demo_packet(
 }
 
 #[cfg(test)]
+pub fn build_demo_context_packet(stream_id: u32, packet_count: u8, timestamp: f64) -> Vec<u8> {
+    let tsi = 1u32;
+    let tsf = 2u32;
+    let ptype = 4u32;
+    let class_id = 0x004f_5054_5257_7834u64;
+    let payload = [0u8; 48];
+    let total_words = 1 + 1 + 2 + 1 + 2 + payload.len() / 4;
+    let word0 = (ptype << 28) | (1u32 << 27) | (tsi << 22) | (tsf << 20)
+        | (((packet_count as u32) & 0x0f) << 16) | total_words as u32;
+    let whole = timestamp.floor() as u32;
+    let frac = ((timestamp - timestamp.floor()) * 1.0e12).round().clamp(0.0, 999_999_999_999.0) as u64;
+    let mut out = Vec::with_capacity(total_words * 4);
+    out.extend_from_slice(&word0.to_be_bytes());
+    out.extend_from_slice(&stream_id.to_be_bytes());
+    out.extend_from_slice(&class_id.to_be_bytes());
+    out.extend_from_slice(&whole.to_be_bytes());
+    out.extend_from_slice(&frac.to_be_bytes());
+    out.extend_from_slice(&payload);
+    out
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -307,6 +353,8 @@ mod tests {
         let f = VrtFrame::parse(&raw).unwrap();
         assert_eq!(f.stream_id(), Some(0x42783031));
         assert_eq!(f.packet_count, 3);
+        assert!(f.is_data_packet());
+        assert!(!f.is_context_packet());
         assert_eq!(f.class_id(), Some(0x004f_5054_5257_7834));
         assert_eq!(raw.len(), 2032);
         assert_eq!(f.packet_size_words, 508);
@@ -315,6 +363,18 @@ mod tests {
         assert_eq!(y[123].re, 123.0);
         let ts = f.timestamp_seconds().unwrap();
         assert!((ts - 1_700_000_000.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn context_packet_is_not_sample_data() {
+        let raw = build_demo_context_packet(0x42783031, 7, 1_700_000_001.0);
+        let f = VrtFrame::parse(&raw).unwrap();
+        assert_eq!(raw.len(), 76);
+        assert_eq!(f.payload().len(), 48);
+        assert_eq!(f.packet_type, 4);
+        assert!(f.is_context_packet());
+        assert!(!f.is_data_packet());
+        assert_eq!(f.packet_type_name(), "IF context");
     }
 
     #[test]

@@ -1,10 +1,10 @@
-# VITA-49 RF Chaos Workbench — Rust v0.5
+# VITA-49 RF Chaos Workbench — Rust v0.5.2
 
-A native Rust VITA-49/VRT chaos-engineering workstation built around the **real RS-34 Bx01 stream on RS5**. v0.5 hardens and visually rebuilds the prototype dashboard with the selected **Operator Workstation** interface and removes the production synthetic/demo packet source.
+A native Rust VITA-49/VRT chaos-engineering workstation built around the **real RS-34 Bx01 stream on RS5**. v0.5.2 hardens and visually rebuilds the prototype dashboard with the selected **Operator Workstation** interface and removes the production synthetic/demo packet source.
 
 The design reference is preserved at `docs/operator_workstation_reference.png`.
 
-## What v0.5 means by “real data”
+## What v0.5.2 means by “real data”
 
 The production GUI does not fabricate packet rates, spectra, waveforms, emitters, CPU/memory values, event rows, comparison metrics, or health state.
 
@@ -20,7 +20,7 @@ The production GUI does not fabricate packet rates, spectra, waveforms, emitters
 - **Health state** is computed from real source freshness, parser state, and capture backlog.
 - **TEST multicast** is off by default and still requires both launch-time permission and an explicit GUI enable.
 
-There is intentionally **no production `demo`/synthetic-source subcommand** in v0.5. Synthetic packets remain only in Rust unit tests, where deterministic fixtures are necessary to test parsing/DSP/fault behavior.
+There is intentionally **no production `demo`/synthetic-source subcommand** in v0.5.2. Synthetic packets remain only in Rust unit tests, where deterministic fixtures are necessary to test parsing/DSP/fault behavior.
 
 See [`REAL_DATA_CONTRACT.md`](REAL_DATA_CONTRACT.md) for the exact provenance of every displayed value.
 
@@ -93,7 +93,7 @@ The chosen layout is implemented directly in `src/gui.rs`:
 No Python virtual environment is used.
 
 ```bash
-cd vita49_chaos_rust_v0.5
+cd vita49_chaos_rust_v0.5.2
 ./scripts/doctor_rs5.sh
 ./scripts/build_rhel8.sh
 ```
@@ -211,4 +211,4 @@ src/
 
 ## Validation status in this artifact
 
-The artifact-generation environment used to prepare v0.5 does not contain `cargo`/`rustc`, so the release binary could not be compiled here. The package therefore includes static validation and makes **RS5 `cargo test` + `cargo build --release` the authoritative gate**. See [`BUILD_VALIDATION.md`](BUILD_VALIDATION.md).
+The artifact-generation environment used to prepare v0.5.2 does not contain `cargo`/`rustc`, so the release binary could not be compiled here. The package therefore includes static validation and makes **RS5 `cargo test` + `cargo build --release` the authoritative gate**. See [`BUILD_VALIDATION.md`](BUILD_VALIDATION.md).

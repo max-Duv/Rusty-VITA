@@ -2,7 +2,7 @@
 
 Reference: `docs/operator_workstation_reference.png`
 
-The selected concept is treated as a structural design target rather than a source of dummy content. v0.5 implements its visual grammar while binding every field to actual runtime state.
+The selected concept is treated as a structural design target rather than a source of dummy content. v0.5.2 implements its visual grammar while binding every field to actual runtime state.
 
 ## Region mapping
 
@@ -22,7 +22,7 @@ The selected concept is treated as a structural design target rather than a sour
 
 ## Intentional differences from the concept art
 
-Where the concept showed a plausible but invented value, v0.5 prefers correctness:
+Where the concept showed a plausible but invented value, v0.5.2 prefers correctness:
 
 - The mockup's synthetic/live selector is replaced by actual mode (`LIVE` or `PCAP REPLAY`); the production synthetic source is removed.
 - Center/span and RBW are derived from sample rate, IQ/real mode, and FFT length rather than hard-coded to the mockup.

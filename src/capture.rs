@@ -245,12 +245,19 @@ pub fn run_probe(cfg: &ResolvedConfig, seconds: f64) -> Result<()> {
     let mut parse_errors = 0u64;
     let mut bytes = 0u64;
     let mut geometry_mismatches = 0u64;
+    let mut data_packets = 0u64;
+    let mut context_packets = 0u64;
+    let mut auxiliary_packets = 0u64;
     let mut sid_mismatches = 0u64;
     let mut class_mismatches = 0u64;
     let mut first = true;
     let mut first_capture: Option<f64> = None;
     let mut last_capture: Option<f64> = None;
-    let mut geometry_hist = BTreeMap::<(usize, usize), u64>::new();
+    let mut first_data_capture: Option<f64> = None;
+    let mut last_data_capture: Option<f64> = None;
+    let mut first_context_capture: Option<f64> = None;
+    let mut last_context_capture: Option<f64> = None;
+    let mut geometry_hist = BTreeMap::<(u8, usize, usize), u64>::new();
     let mut type_hist = BTreeMap::<u8, u64>::new();
 
     while Instant::now() < until {
@@ -263,12 +270,27 @@ pub fn run_probe(cfg: &ResolvedConfig, seconds: f64) -> Result<()> {
             match VrtFrame::parse(&ev.raw) {
                 Ok(f) => {
                     good += 1;
-                    *geometry_hist.entry((ev.raw.len(), f.payload().len())).or_default() += 1;
+                    *geometry_hist.entry((f.packet_type, ev.raw.len(), f.payload().len())).or_default() += 1;
                     *type_hist.entry(f.packet_type).or_default() += 1;
-                    if cfg.stream.packet_bytes.map(|n| n != ev.raw.len()).unwrap_or(false)
-                        || cfg.stream.data_bytes.map(|n| n != f.payload().len()).unwrap_or(false)
-                    {
-                        geometry_mismatches += 1;
+                    if f.is_data_packet() {
+                        data_packets += 1;
+                        if ev.capture_time.is_finite() {
+                            first_data_capture.get_or_insert(ev.capture_time);
+                            last_data_capture = Some(ev.capture_time);
+                        }
+                        if cfg.stream.packet_bytes.map(|n| n != ev.raw.len()).unwrap_or(false)
+                            || cfg.stream.data_bytes.map(|n| n != f.payload().len()).unwrap_or(false)
+                        {
+                            geometry_mismatches += 1;
+                        }
+                    } else if f.is_context_packet() {
+                        context_packets += 1;
+                        if ev.capture_time.is_finite() {
+                            first_context_capture.get_or_insert(ev.capture_time);
+                            last_context_capture = Some(ev.capture_time);
+                        }
+                    } else {
+                        auxiliary_packets += 1;
                     }
                     if cfg.stream.stream_id.map(|sid| Some(sid) != f.stream_id()).unwrap_or(false) {
                         sid_mismatches += 1;
@@ -276,7 +298,7 @@ pub fn run_probe(cfg: &ResolvedConfig, seconds: f64) -> Result<()> {
                     if cfg.stream.class_id.map(|cid| Some(cid) != f.class_id()).unwrap_or(false) {
                         class_mismatches += 1;
                     }
-                    if first {
+                    if first && f.is_data_packet() {
                         first = false;
                         let samples = decode_payload(&f, cfg.format, cfg.stream.iq).len();
                         println!("FIRST VITA PACKET");
@@ -305,6 +327,20 @@ pub fn run_probe(cfg: &ResolvedConfig, seconds: f64) -> Result<()> {
     let capture_pps = capture_span
         .filter(|dt| *dt > 0.0 && packet_total > 1)
         .map(|dt| (packet_total - 1) as f64 / dt);
+    let data_span = match (first_data_capture, last_data_capture) {
+        (Some(a), Some(b)) if b > a => Some(b - a),
+        _ => None,
+    };
+    let data_pps = data_span
+        .filter(|dt| *dt > 0.0 && data_packets > 1)
+        .map(|dt| (data_packets - 1) as f64 / dt);
+    let context_span = match (first_context_capture, last_context_capture) {
+        (Some(a), Some(b)) if b > a => Some(b - a),
+        _ => None,
+    };
+    let context_pps = context_span
+        .filter(|dt| *dt > 0.0 && context_packets > 1)
+        .map(|dt| (context_packets - 1) as f64 / dt);
     let capture_mbps = capture_span
         .filter(|dt| *dt > 0.0)
         .map(|dt| bytes as f64 * 8.0 / dt / 1e6);
@@ -320,7 +356,10 @@ pub fn run_probe(cfg: &ResolvedConfig, seconds: f64) -> Result<()> {
     println!("  packets       : {}", packet_total);
     println!("  parsed        : {}", good);
     println!("  parse errors  : {}", parse_errors);
-    println!("  geometry diff : {}", geometry_mismatches);
+    println!("  data packets  : {}", data_packets);
+    println!("  context pkts  : {}", context_packets);
+    println!("  auxiliary pkts: {}", auxiliary_packets);
+    println!("  data geom diff: {}", geometry_mismatches);
     println!("  SID mismatch  : {}", sid_mismatches);
     println!("  class mismatch: {}", class_mismatches);
     println!("  wall rate     : {:.1} packets/s  (includes tshark startup/drain)", packet_total as f64 / wall_elapsed);
@@ -328,12 +367,20 @@ pub fn run_probe(cfg: &ResolvedConfig, seconds: f64) -> Result<()> {
         println!("  capture span  : {:.3} s", dt);
     }
     if let Some(pps) = capture_pps {
-        println!("  wire rate     : {:.1} packets/s  (frame.time_epoch)", pps);
+        println!("  wire all      : {:.1} packets/s  (all VITA packet classes)", pps);
+    } else {
+        println!("  wire all      : n/a (insufficient capture timestamps)");
+    }
+    if let Some(pps) = data_pps {
+        println!("  wire data     : {:.1} packets/s  (sample-bearing VITA data)", pps);
         if samples_per_packet > 0 {
-            println!("  wire sample   : {:.0} Sa/s", pps * samples_per_packet as f64);
+            println!("  wire sample   : {:.0} Sa/s  (data packets only)", pps * samples_per_packet as f64);
         }
     } else {
-        println!("  wire rate     : n/a (insufficient capture timestamps)");
+        println!("  wire data     : n/a (insufficient data-packet timestamps)");
+    }
+    if let Some(pps) = context_pps {
+        println!("  context rate  : {:.3} packets/s", pps);
     }
     if let Some(mbps) = capture_mbps {
         println!("  throughput    : {:.3} Mbit/s  (capture-time basis)", mbps);
@@ -342,15 +389,35 @@ pub fn run_probe(cfg: &ResolvedConfig, seconds: f64) -> Result<()> {
     }
 
     println!("\nGEOMETRY HISTOGRAM");
-    for ((packet_bytes, payload_bytes), count) in geometry_hist {
-        let marker = if cfg.stream.packet_bytes.map(|v| v == packet_bytes).unwrap_or(true)
+    for ((ptype, packet_bytes, payload_bytes), count) in geometry_hist {
+        let is_data = matches!(ptype, 0..=3);
+        let is_context = matches!(ptype, 4 | 5);
+        let marker = if is_data
+            && cfg.stream.packet_bytes.map(|v| v == packet_bytes).unwrap_or(true)
             && cfg.stream.data_bytes.map(|v| v == payload_bytes).unwrap_or(true)
-        { "expected" } else { "DIFF" };
-        println!("  {:>6} packets : {:>4} B packet / {:>4} B payload  [{}]", count, packet_bytes, payload_bytes, marker);
+        { "data expected" } else if is_data {
+            "DATA DIFF"
+        } else if is_context {
+            "context"
+        } else {
+            "auxiliary"
+        };
+        println!("  {:>6} packets : type {:>2} / {:>4} B packet / {:>4} B payload  [{}]", count, ptype, packet_bytes, payload_bytes, marker);
     }
     println!("PACKET TYPE HISTOGRAM");
     for (ptype, count) in type_hist {
-        println!("  type {:>2}: {}", ptype, count);
+        let name = match ptype {
+            0 => "IF data (no Stream ID)",
+            1 => "IF data (Stream ID)",
+            2 => "Ext data (no Stream ID)",
+            3 => "Ext data (Stream ID)",
+            4 => "IF context",
+            5 => "Ext context",
+            6 => "Command",
+            7 => "Extension command",
+            _ => "reserved",
+        };
+        println!("  type {:>2}: {:>6}  {}", ptype, count, name);
     }
     Ok(())
 }

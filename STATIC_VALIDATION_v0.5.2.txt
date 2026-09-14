@@ -1,0 +1,40 @@
+VITA-49 Chaos Workbench v0.5.2 static validation
+
+NOTE: cargo/rustc are not installed in this artifact-generation environment. RS5 cargo test/build remains authoritative.
+
+[OK] Cargo.toml parse: version 0.5.2
+[OK] config/bx01.json parse: OK
+[OK] config/example_experiment.json parse: OK
+[OK] bash -n build_native_pcap.sh: OK
+[OK] bash -n build_rhel8.sh: OK
+[OK] bash -n check.sh: OK
+[OK] bash -n doctor_rs5.sh: OK
+[OK] bash -n probe_bx01.sh: OK
+[OK] bash -n run_bx01.sh: OK
+[OK] bash -n run_bx01_emit_test.sh: OK
+[OK] bash -n run_bx01_emitter_swarm.sh: OK
+[OK] lexical analytics.rs: OK
+[OK] lexical capture.rs: OK
+[OK] lexical chaos.rs: OK
+[OK] lexical cli.rs: OK
+[OK] lexical dsp.rs: OK
+[OK] lexical emit.rs: OK
+[OK] lexical gui.rs: OK
+[OK] lexical logging.rs: OK
+[OK] lexical main.rs: OK
+[OK] lexical metrics.rs: OK
+[OK] lexical profile.rs: OK
+[OK] lexical scenario.rs: OK
+[OK] lexical state.rs: OK
+[OK] lexical telemetry.rs: OK
+[OK] lexical vita49.rs: OK
+[OK] lexical worker.rs: OK
+[OK] viewport min reduced: OK
+[OK] responsive side widths: OK
+[OK] responsive metrics: OK
+[OK] responsive monitor heights: OK
+[OK] monitor avoids outer scroll: OK
+[OK] dynamic waterfall height: OK
+[OK] dynamic spectrum height: OK
+[OK] dynamic waveform height: OK
+[OK] dynamic comparison height: OK

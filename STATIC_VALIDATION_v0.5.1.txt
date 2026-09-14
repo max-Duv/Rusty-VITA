@@ -1,0 +1,18 @@
+VITA-49 Chaos Workbench v0.5.1 static validation
+
+Artifact environment does not provide cargo/rustc, so RS5 remains the authoritative compiler/test gate.
+
+Static checks completed:
+- Cargo.toml parses; package version 0.5.1.
+- config JSON files parse.
+- shell scripts pass bash -n.
+- edited Rust files have balanced delimiters.
+- production packet path now classifies VITA packet types before sample decoding.
+- signal-domain chaos is gated to data packets only.
+- metrics separate data packets from context packets.
+- probe reports all/data/context rates separately.
+- 15 Rust unit tests are present, including new context classification/isolation regressions.
+
+Required RS5 gate:
+  bash ./scripts/build_rhel8.sh
+  bash ./scripts/probe_bx01.sh 30

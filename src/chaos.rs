@@ -382,7 +382,10 @@ impl ChaosEngine {
         }
 
         let s = self.config.signal.clone();
-        if s.enabled {
+        // Signal-domain faults operate only on sample-bearing VITA data packets.
+        // Context packets (e.g. Bx01 type 4 IF Context) contain metadata/control
+        // words and must never be interpreted as RF samples.
+        if s.enabled && frame.is_data_packet() {
             let mut x = decode_payload(&frame, self.fmt, self.iq);
             if !x.is_empty() {
                 let sf = self.signal_mutate(&mut x, &s);
@@ -709,7 +712,7 @@ impl ChaosEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vita49::build_demo_packet;
+    use crate::vita49::{build_demo_context_packet, build_demo_packet};
 
     #[test]
     fn blackout_drops() {
@@ -912,5 +915,20 @@ mod tests {
         assert!(rel < 0.03, "RMS should remain near baseline: before={before_rms}, after={after_rms}, rel={rel}");
         assert!(e.stats.emitter_clones >= 1);
     }
+
+    #[test]
+    fn signal_faults_leave_context_packets_byte_exact() {
+        let raw = build_demo_context_packet(0x42783031, 5, 1000.0);
+        let mut e = ChaosEngine::new(250_000.0, SampleFormat::BeI32, false, 7);
+        e.config.signal.enabled = true;
+        e.config.signal.gain = 0.25;
+        e.config.signal.emitter_clone_enabled = true;
+        e.set_active(true);
+
+        let out = e.ingest(&raw, Instant::now());
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].raw, raw, "signal-domain faults must not reinterpret context payload as RF samples");
+    }
+
 
 }
