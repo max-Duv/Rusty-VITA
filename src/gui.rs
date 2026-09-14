@@ -7,7 +7,7 @@ use chrono::{TimeZone, Utc};
 use eframe::egui::{self, Align, Color32, FontData, FontDefinitions, FontFamily, FontId, RichText, Sense, Stroke, Vec2};
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 
-use crate::analytics::{EmitterObservation, SignalStatistics};
+use crate::analytics::EmitterObservation;
 use crate::chaos::{ChaosConfig, SeqMode, SignalConfig};
 use crate::dsp::full_scale;
 use crate::profile::{InputMode, ResolvedConfig};
@@ -391,7 +391,7 @@ impl WorkbenchApp {
             .frame(
                 egui::Frame::none()
                     .fill(Color32::from_rgb(4, 12, 18))
-                    .stroke(Stroke::new(1.0, BORDER))
+                    .stroke(Stroke::new(1.0_f32, BORDER))
                     .inner_margin(egui::Margin::symmetric(14.0, 9.0)),
             )
             .show(ctx, |ui| {
@@ -437,7 +437,7 @@ impl WorkbenchApp {
                             self.latest.active,
                             egui::Button::new(RichText::new("■  STOP").strong().color(TEXT))
                                 .fill(if self.latest.active { Color32::from_rgb(93, 28, 38) } else { PANEL_2 })
-                                .stroke(Stroke::new(1.0, if self.latest.active { RED } else { BORDER })),
+                                .stroke(Stroke::new(1.0_f32, if self.latest.active { RED } else { BORDER })),
                         );
                         if stop.clicked() {
                             self.stop();
@@ -446,7 +446,7 @@ impl WorkbenchApp {
                             self.armed && !self.latest.active,
                             egui::Button::new(RichText::new("▶  RUN CHAOS").strong().color(TEXT))
                                 .fill(if self.armed && !self.latest.active { Color32::from_rgb(13, 91, 59) } else { PANEL_2 })
-                                .stroke(Stroke::new(1.0, GREEN)),
+                                .stroke(Stroke::new(1.0_f32, GREEN)),
                         );
                         if run.clicked() {
                             self.start();
@@ -458,7 +458,7 @@ impl WorkbenchApp {
                                 egui::Button::new(RichText::new(arm_label).strong())
                                     .min_size(Vec2::new(90.0, 30.0))
                                     .fill(PANEL_3)
-                                    .stroke(Stroke::new(1.0, if self.armed { AMBER } else { BORDER_HI })),
+                                    .stroke(Stroke::new(1.0_f32, if self.armed { AMBER } else { BORDER_HI })),
                             )
                             .clicked()
                         {
@@ -510,7 +510,7 @@ impl WorkbenchApp {
             .frame(
                 egui::Frame::none()
                     .fill(Color32::from_rgb(4, 11, 16))
-                    .stroke(Stroke::new(1.0, BORDER))
+                    .stroke(Stroke::new(1.0_f32, BORDER))
                     .inner_margin(egui::Margin::symmetric(10.0, 4.0)),
             )
             .show(ctx, |ui| {
@@ -572,7 +572,7 @@ impl WorkbenchApp {
             .default_width(260.0)
             .min_width(230.0)
             .max_width(360.0)
-            .frame(egui::Frame::none().fill(Color32::from_rgb(6, 15, 21)).stroke(Stroke::new(1.0, BORDER)))
+            .frame(egui::Frame::none().fill(Color32::from_rgb(6, 15, 21)).stroke(Stroke::new(1.0_f32, BORDER)))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     control_tab(ui, &mut self.control_tab, ControlTab::Experiment, "EXPERIMENT");
@@ -613,7 +613,7 @@ impl WorkbenchApp {
             .default_width(270.0)
             .min_width(235.0)
             .max_width(380.0)
-            .frame(egui::Frame::none().fill(Color32::from_rgb(6, 15, 21)).stroke(Stroke::new(1.0, BORDER)))
+            .frame(egui::Frame::none().fill(Color32::from_rgb(6, 15, 21)).stroke(Stroke::new(1.0_f32, BORDER)))
             .show(ctx, |ui| {
                 panel_box(ui, |ui| self.system_health_panel(ui));
                 ui.add_space(8.0);
@@ -996,11 +996,11 @@ impl WorkbenchApp {
         let legend_w = 42.0;
         ui.horizontal(|ui| {
             if let Some(tex) = &self.waterfall_tex {
-                egui::Frame::none().fill(Color32::BLACK).stroke(Stroke::new(1.0, BORDER_HI)).show(ui, |ui| {
+                egui::Frame::none().fill(Color32::BLACK).stroke(Stroke::new(1.0_f32, BORDER_HI)).show(ui, |ui| {
                     ui.add(egui::Image::new((tex.id(), egui::vec2((available - legend_w - 8.0).max(200.0), 178.0))));
                 });
             } else {
-                egui::Frame::none().fill(Color32::BLACK).stroke(Stroke::new(1.0, BORDER_HI)).show(ui, |ui| {
+                egui::Frame::none().fill(Color32::BLACK).stroke(Stroke::new(1.0_f32, BORDER_HI)).show(ui, |ui| {
                     ui.allocate_ui(egui::vec2((available - legend_w - 8.0).max(200.0), 178.0), |ui| {
                         ui.centered_and_justified(|ui| {
                             ui.label(RichText::new("WAITING FOR VALIDATED VITA SAMPLE DATA").small().color(MUTED));
@@ -1278,7 +1278,7 @@ impl eframe::App for WorkbenchApp {
                 if let Some(err) = &self.latest.error {
                     egui::Frame::none()
                         .fill(Color32::from_rgb(68, 18, 25))
-                        .stroke(Stroke::new(1.0, RED))
+                        .stroke(Stroke::new(1.0_f32, RED))
                         .rounding(4.0)
                         .inner_margin(egui::Margin::same(7.0))
                         .show(ui, |ui| {
@@ -1335,15 +1335,15 @@ fn install_theme(ctx: &egui::Context) {
     style.visuals.faint_bg_color = PANEL_2;
     style.visuals.code_bg_color = PANEL_2;
     style.visuals.widgets.noninteractive.bg_fill = PANEL;
-    style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
+    style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER);
     style.visuals.widgets.inactive.bg_fill = PANEL_2;
-    style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
+    style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, BORDER);
     style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(14, 39, 51);
-    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, BORDER_HI);
+    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, BORDER_HI);
     style.visuals.widgets.active.bg_fill = Color32::from_rgb(15, 49, 61);
-    style.visuals.widgets.active.bg_stroke = Stroke::new(1.0, CYAN);
+    style.visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, CYAN);
     style.visuals.selection.bg_fill = Color32::from_rgb(11, 67, 84);
-    style.visuals.selection.stroke = Stroke::new(1.0, CYAN);
+    style.visuals.selection.stroke = Stroke::new(1.0_f32, CYAN);
     style.spacing.item_spacing = egui::vec2(6.0, 4.0);
     style.spacing.button_padding = egui::vec2(10.0, 5.0);
     style.spacing.interact_size.y = 24.0;
@@ -1358,11 +1358,11 @@ fn draw_wave_logo(ui: &mut egui::Ui) {
         (24.0, 34.0), (29.0, 12.0), (33.0, 22.0), (37.0, 18.0), (44.0, 18.0),
     ];
     let points: Vec<_> = pts.iter().map(|(x, y)| egui::pos2(rect.left() + *x, rect.top() + *y)).collect();
-    ui.painter().add(egui::Shape::line(points, Stroke::new(1.8, CYAN)));
+    ui.painter().add(egui::Shape::line(points, Stroke::new(1.8_f32, CYAN)));
 }
 
 fn header_field(ui: &mut egui::Ui, label: &str, value: &str, color: Color32) {
-    egui::Frame::none().fill(PANEL).stroke(Stroke::new(1.0, BORDER)).rounding(4.0).inner_margin(egui::Margin::symmetric(9.0, 5.0)).show(ui, |ui| {
+    egui::Frame::none().fill(PANEL).stroke(Stroke::new(1.0_f32, BORDER)).rounding(4.0).inner_margin(egui::Margin::symmetric(9.0, 5.0)).show(ui, |ui| {
         ui.vertical(|ui| {
             ui.label(RichText::new(label).size(8.5).color(MUTED));
             ui.label(RichText::new(value).small().monospace().color(color));
@@ -1371,13 +1371,13 @@ fn header_field(ui: &mut egui::Ui, label: &str, value: &str, color: Color32) {
 }
 
 fn status_pill(ui: &mut egui::Ui, text: &str, color: Color32) {
-    egui::Frame::none().fill(PANEL_2).stroke(Stroke::new(1.0, color)).rounding(4.0).inner_margin(egui::Margin::symmetric(8.0, 4.0)).show(ui, |ui| {
+    egui::Frame::none().fill(PANEL_2).stroke(Stroke::new(1.0_f32, color)).rounding(4.0).inner_margin(egui::Margin::symmetric(8.0, 4.0)).show(ui, |ui| {
         ui.label(RichText::new(text).small().strong().color(color));
     });
 }
 
 fn status_strip(ui: &mut egui::Ui, text: &str, color: Color32) {
-    egui::Frame::none().fill(color.gamma_multiply(0.12)).stroke(Stroke::new(1.0, color.gamma_multiply(0.55))).rounding(4.0).inner_margin(egui::Margin::symmetric(8.0, 3.0)).show(ui, |ui| {
+    egui::Frame::none().fill(color.gamma_multiply(0.12)).stroke(Stroke::new(1.0_f32, color.gamma_multiply(0.55))).rounding(4.0).inner_margin(egui::Margin::symmetric(8.0, 3.0)).show(ui, |ui| {
         ui.label(RichText::new(text).small().strong().color(color));
     });
 }
@@ -1406,7 +1406,7 @@ fn source_tab(ui: &mut egui::Ui, selected: &mut SourceTableTab, value: SourceTab
 }
 
 fn panel_box<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    egui::Frame::none().fill(PANEL).stroke(Stroke::new(1.0, BORDER)).rounding(4.0).inner_margin(egui::Margin::same(8.0)).show(ui, add).inner
+    egui::Frame::none().fill(PANEL).stroke(Stroke::new(1.0_f32, BORDER)).rounding(4.0).inner_margin(egui::Margin::same(8.0)).show(ui, add).inner
 }
 
 fn section_title(text: &str) -> RichText {
@@ -1455,7 +1455,7 @@ fn compact_f64(ui: &mut egui::Ui, label: &str, unit: &str, value: &mut f64, min:
 }
 
 fn metric_card(ui: &mut egui::Ui, width: f32, label: &str, value: String, color: Color32, history: &VecDeque<f64>) {
-    egui::Frame::none().fill(PANEL_2).stroke(Stroke::new(1.0, BORDER)).rounding(5.0).inner_margin(egui::Margin::symmetric(9.0, 6.0)).show(ui, |ui| {
+    egui::Frame::none().fill(PANEL_2).stroke(Stroke::new(1.0_f32, BORDER)).rounding(5.0).inner_margin(egui::Margin::symmetric(9.0, 6.0)).show(ui, |ui| {
         ui.set_width(width);
         ui.label(RichText::new(label).size(8.5).strong().color(MUTED));
         ui.horizontal(|ui| {
@@ -1470,7 +1470,7 @@ fn metric_card(ui: &mut egui::Ui, width: f32, label: &str, value: String, color:
 fn draw_sparkline(ui: &mut egui::Ui, values: &VecDeque<f64>, color: Color32, size: Vec2) {
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     if values.len() < 2 {
-        ui.painter().line_segment([rect.left_center(), rect.right_center()], Stroke::new(1.0, BORDER));
+        ui.painter().line_segment([rect.left_center(), rect.right_center()], Stroke::new(1.0_f32, BORDER));
         return;
     }
     let min = values.iter().copied().filter(|v| v.is_finite()).fold(f64::INFINITY, f64::min);
@@ -1483,7 +1483,7 @@ fn draw_sparkline(ui: &mut egui::Ui, values: &VecDeque<f64>, color: Color32, siz
         let y = rect.bottom() - rect.height() * t;
         egui::pos2(x, y)
     }).collect();
-    ui.painter().add(egui::Shape::line(points, Stroke::new(1.2, color.gamma_multiply(0.85))));
+    ui.painter().add(egui::Shape::line(points, Stroke::new(1.2_f32, color.gamma_multiply(0.85))));
 }
 
 fn draw_color_scale(ui: &mut egui::Ui, floor: f64, ceil: f64, height: f32) {
@@ -1497,7 +1497,7 @@ fn draw_color_scale(ui: &mut egui::Ui, floor: f64, ceil: f64, height: f32) {
         let t = 1.0 - i as f64 / (steps - 1) as f64;
         ui.painter().rect_filled(egui::Rect::from_min_max(egui::pos2(bar.left(), y0), egui::pos2(bar.right(), y1)), 0.0, operator_colormap(t));
     }
-    ui.painter().rect_stroke(bar, 0.0, Stroke::new(1.0, BORDER_HI));
+    ui.painter().rect_stroke(bar, 0.0, Stroke::new(1.0_f32, BORDER_HI));
     let font = FontId::monospace(8.0);
     for i in 0..=4 {
         let t = i as f64 / 4.0;
@@ -1528,7 +1528,7 @@ fn comparison_row(ui: &mut egui::Ui, name: &str, clean: Option<f64>, chaos: Opti
 }
 
 fn counter_chip(ui: &mut egui::Ui, label: &str, value: u64) {
-    egui::Frame::none().fill(PANEL_2).stroke(Stroke::new(1.0, BORDER)).rounding(3.0).inner_margin(egui::Margin::symmetric(6.0, 3.0)).show(ui, |ui| {
+    egui::Frame::none().fill(PANEL_2).stroke(Stroke::new(1.0_f32, BORDER)).rounding(3.0).inner_margin(egui::Margin::symmetric(6.0, 3.0)).show(ui, |ui| {
         ui.label(RichText::new(format!("{label} {value}")).small().monospace().color(MUTED));
     });
 }

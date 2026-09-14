@@ -1,6 +1,6 @@
 [package]
 name = "vita49-chaos"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 description = "Native VITA-49/VRT chaos engineering workbench for RF collection systems"
 license = "MIT"

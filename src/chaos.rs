@@ -510,6 +510,29 @@ impl ChaosEngine {
         let mut out = base;
         let half = s.emitter_clone_half_width_bins.min(n / 8);
 
+        // Occupancy is a *signal-presence* decision, not a raw-magnitude decision.
+        // A windowed FFT deliberately spreads a strong source into a spectral
+        // skirt.  Comparing one destination bin directly against the median can
+        // therefore falsely declare a perfectly empty clone destination
+        // "occupied" (the regression caught by the 20 kHz -> 30 kHz test).
+        // Require a local spectral maximum inside the destination slice before
+        // the occupancy guard can block a clone.  This still rejects a real
+        // emitter at the destination while ignoring monotonic leakage skirts.
+        let iq = self.iq;
+        let destination_is_occupied = |center: usize, limit: f64| -> bool {
+            let guard_half = half.max(1) as isize;
+            for rel in -guard_half..=guard_half {
+                let k = ((center as isize + rel).rem_euclid(n as isize)) as usize;
+                if k == 0 || (!iq && k >= n / 2) { continue; }
+                let prev = if k == 0 { n - 1 } else { k - 1 };
+                let next = (k + 1) % n;
+                if mags[k] >= limit && mags[k] > mags[prev] && mags[k] >= mags[next] {
+                    return true;
+                }
+            }
+            false
+        };
+
         let freq_to_bin = |f: f64| -> Option<usize> {
             if f < -fs / 2.0 || f >= fs / 2.0 { return None; }
             let k = if f >= 0.0 {
@@ -541,7 +564,7 @@ impl ChaosEngine {
                 let clone_gain = s.emitter_clone_gain * s.emitter_clone_gain_decay.clamp(0.0, 1.0).powi(copy_idx as i32);
                 if clone_gain <= 0.0 { continue; }
                 if let (Some(limit), Some(target_bin)) = (occupancy_threshold, freq_to_bin(target_center)) {
-                    if mags[target_bin] >= limit {
+                    if destination_is_occupied(target_bin, limit) {
                         report.skipped_occupied += 1;
                         continue;
                     }
@@ -791,6 +814,36 @@ mod tests {
         assert!(after_target > before_target + 1_000.0,
             "expected a visible cloned emitter at {target_hz} Hz: before={before_target}, after={after_target}");
         assert!(e.stats.emitter_clones >= 1);
+    }
+
+    #[test]
+    fn emitter_clone_occupancy_guard_ignores_source_window_skirt() {
+        let fs = 256_000.0;
+        let n = 512usize;
+        let x: Vec<_> = (0..n).map(|i| {
+            let p = std::f64::consts::TAU * 20_000.0 * i as f64 / fs;
+            Complex64::new(20_000.0 * p.sin(), 0.0)
+        }).collect();
+        let raw = build_demo_packet(&x, 0x42783031, 2, SampleFormat::BeI32, false, 1000.0);
+
+        let mut e = ChaosEngine::new(fs, SampleFormat::BeI32, false, 99);
+        e.config.signal.enabled = true;
+        e.config.signal.emitter_clone_enabled = true;
+        e.config.signal.emitter_clone_copies = 1;
+        e.config.signal.emitter_clone_spacing_hz = 10_000.0;
+        e.config.signal.emitter_clone_gain = 0.5;
+        e.config.signal.emitter_clone_threshold_db = 6.0;
+        e.config.signal.emitter_clone_max_emitters = 1;
+        e.config.signal.emitter_clone_half_width_bins = 1;
+        e.config.signal.emitter_clone_bidirectional = false;
+        e.config.signal.emitter_clone_occupancy_guard_db = 8.0;
+        e.set_active(true);
+
+        let out = e.ingest(&raw, Instant::now());
+        assert_eq!(out.len(), 1);
+        assert!(e.stats.emitter_clones >= 1,
+            "a monotonic Hann-window leakage skirt must not be treated as a real occupied emitter");
+        assert_eq!(e.stats.emitter_clone_skipped, 0);
     }
 
     #[test]
