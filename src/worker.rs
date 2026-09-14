@@ -112,14 +112,24 @@ fn worker_loop(cfg: ResolvedConfig, commands: Receiver<WorkerCommand>, updates: 
                     events.push_back(de);
                 }
                 WorkerCommand::Stop => {
+                    let summary = json!({ "clean": clean_metrics.snapshot(), "chaos": chaos_metrics.snapshot(), "engine": engine.stats.clone(), "label": active_label.clone() });
+                    if logger.active() { let _ = logger.close(&summary); }
+
+                    // STOP is a hard experiment boundary: cancel any delayed or
+                    // reordered experiment packets and restore a default config.
+                    // Otherwise an old fixed-delay/jitter/throttle scenario could
+                    // continue affecting the output branch after the UI says
+                    // PASS-THROUGH.
                     engine.set_active(false);
+                    engine.set_config(ChaosConfig::default());
+                    engine.reset();
+                    chaos_metrics.reset();
+                    chaos_recent.clear();
                     cascade_started = None;
                     cascade_phase_idx = None;
                     emit_enabled = false;
                     emitter = None;
-                    let summary = json!({ "clean": clean_metrics.snapshot(), "chaos": chaos_metrics.snapshot(), "engine": engine.stats.clone(), "label": active_label.clone() });
-                    if logger.active() { let _ = logger.close(&summary); }
-                    events.push_back(DisplayEvent { wall_time: chrono::Utc::now().timestamp_millis() as f64 / 1000.0, name: "STOP".into(), detail: active_label.clone() });
+                    events.push_back(DisplayEvent { wall_time: chrono::Utc::now().timestamp_millis() as f64 / 1000.0, name: "STOP".into(), detail: format!("{}; exact pass-through restored", active_label) });
                 }
                 WorkerCommand::Shutdown => shutdown = true,
             }

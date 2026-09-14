@@ -1,9 +1,9 @@
-# RS5 Quick Start — v0.5.2
+# RS5 Quick Start — v0.5.3
 
 ## 1. Enter the project
 
 ```bash
-cd vita49_chaos_rust_v0.5.2
+cd vita49_chaos_rust_v0.5.3
 ```
 
 ## 2. Host preflight
@@ -27,7 +27,7 @@ sudo -v
 ./scripts/probe_bx01.sh 30
 ```
 
-The v0.5.2 probe reports both wall-clock delivery rate and capture-time wire rate. Use the **wire rate** (`frame.time_epoch`) for source-rate validation; wall rate includes TShark startup/drain overhead. Review the geometry histogram before fault experiments.
+The v0.5.3 probe reports both wall-clock delivery rate and capture-time wire rate. Use the **wire rate** (`frame.time_epoch`) for source-rate validation; wall rate includes TShark startup/drain overhead. Review the geometry histogram before fault experiments.
 
 ## 5. Launch the Operator Workstation
 

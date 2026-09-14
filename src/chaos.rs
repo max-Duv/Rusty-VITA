@@ -243,8 +243,19 @@ impl ChaosEngine {
         self.stats.seen += 1;
         self.input_index += 1;
         if !self.active {
-            self.schedule(raw.to_vec(), now, Vec::new());
-            return self.poll(now);
+            // Inactive means exact pass-through. Do not route through `schedule`,
+            // because `schedule` intentionally applies the configured transport
+            // delay/jitter/throttle knobs. A previously selected/run scenario must
+            // never leak transport behavior into clean observation mode.
+            self.order += 1;
+            self.stats.scheduled += 1;
+            self.stats.emitted += 1;
+            return vec![ScheduledPacket {
+                due: now,
+                order: self.order,
+                raw: raw.to_vec(),
+                faults: Vec::new(),
+            }];
         }
 
         if self.config.transport.blackout {
@@ -723,6 +734,29 @@ mod tests {
         let raw = build_demo_packet(&x, 0x42783031, 0, SampleFormat::BeI32, false, 1000.0);
         assert!(e.ingest(&raw, Instant::now()).is_empty());
         assert_eq!(e.stats.dropped, 1);
+    }
+
+    #[test]
+    fn inactive_engine_is_exact_pass_through_even_with_fault_config() {
+        let mut e = ChaosEngine::new(250_000.0, SampleFormat::BeI32, false, 123);
+        e.config.transport.fixed_delay_ms = 5_000.0;
+        e.config.transport.jitter_ms = 500.0;
+        e.config.transport.throttle_pps = 1.0;
+        e.config.transport.blackout = true;
+        e.config.signal.enabled = true;
+        e.config.signal.gain = 0.25;
+        e.set_active(false);
+
+        let x = vec![Complex64::new(1234.0, 0.0); 500];
+        let raw = build_demo_packet(&x, 0x42783031, 0, SampleFormat::BeI32, false, 1000.0);
+        let now = Instant::now();
+        let out = e.ingest(&raw, now);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].raw, raw);
+        assert_eq!(out[0].due, now);
+        assert!(out[0].faults.is_empty());
+        assert_eq!(e.stats.dropped, 0);
+        assert_eq!(e.stats.mutated, 0);
     }
 
     #[test]

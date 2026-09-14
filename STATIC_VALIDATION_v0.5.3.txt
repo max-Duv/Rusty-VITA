@@ -1,0 +1,20 @@
+VITA-49 Chaos Workbench v0.5.3 — static validation
+
+Environment limitation:
+- cargo/rustc are not installed in the artifact-generation container.
+- RS5 cargo test + cargo build --release remain the authoritative compile gates.
+
+Checks completed here:
+- Cargo.toml parsed successfully; package version 0.5.3.
+- config/bx01.json parsed successfully.
+- config/example_experiment.json parsed successfully.
+- all Rust source files passed lexical delimiter/comment/string balance scanning.
+- all shell scripts passed bash -n.
+- inactive engine path was structurally changed to immediate byte-for-byte pass-through.
+- new regression test: inactive_engine_is_exact_pass_through_even_with_fault_config.
+- lower source/comparison panes use constrained two-axis scroll areas.
+- passive Experiment Impact is gated to N/A until RUN CHAOS is active.
+
+Run on RS5:
+  source "$HOME/.cargo/env"
+  bash ./scripts/build_rhel8.sh

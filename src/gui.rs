@@ -139,6 +139,7 @@ struct WorkbenchApp {
     control_tab: ControlTab,
     source_table_tab: SourceTableTab,
     event_filter: EventFilter,
+    right_rail_open: bool,
 
     waterfall: VecDeque<Vec<f64>>,
     waterfall_active: VecDeque<bool>,
@@ -196,6 +197,7 @@ impl WorkbenchApp {
             control_tab: ControlTab::Experiment,
             source_table_tab: SourceTableTab::Active,
             event_filter: EventFilter::All,
+            right_rail_open: cc.egui_ctx.screen_rect().width() >= 1180.0,
             waterfall: VecDeque::with_capacity(360),
             waterfall_active: VecDeque::with_capacity(360),
             waterfall_boundary: VecDeque::with_capacity(360),
@@ -520,6 +522,17 @@ impl WorkbenchApp {
                                 format!("preset={} seed={}", self.selected_preset, self.seed),
                             );
                         }
+                        let inspector_label = if self.right_rail_open { "HIDE INSPECTOR" } else { "SHOW INSPECTOR" };
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new(inspector_label).small().strong())
+                                    .fill(PANEL_2)
+                                    .stroke(Stroke::new(1.0_f32, BORDER_HI)),
+                            )
+                            .clicked()
+                        {
+                            self.right_rail_open = !self.right_rail_open;
+                        }
                     });
                 });
 
@@ -536,7 +549,7 @@ impl WorkbenchApp {
                     if self.latest.clean.pps > 0.0 {
                         ui.label(
                             RichText::new(format!(
-                                "clean {:.1} pps    chaos {:.1} pps    Δ {:+.1}%",
+                                "clean {:.1} pps    output {:.1} pps    Δ {:+.1}%",
                                 self.latest.clean.pps,
                                 self.latest.chaos.pps,
                                 pps_delta(self.latest.clean.pps, self.latest.chaos.pps)
@@ -668,12 +681,15 @@ impl WorkbenchApp {
     }
 
     fn right_panel(&mut self, ctx: &egui::Context) {
+        if !self.right_rail_open {
+            return;
+        }
         let layout = layout_metrics(ctx);
         egui::SidePanel::right("operator_health_rail")
             .resizable(true)
             .default_width(layout.right_w)
-            .min_width((layout.right_w - 30.0).max(205.0))
-            .max_width(layout.right_w + 46.0)
+            .min_width(220.0)
+            .max_width((layout.right_w + 72.0).max(300.0))
             .frame(
                 egui::Frame::none()
                     .fill(Color32::from_rgb(6, 15, 21))
@@ -884,6 +900,11 @@ impl WorkbenchApp {
         health_kv(ui, "Output rate", optional_rate(self.latest.chaos.samples_per_sec, "Sa/s"));
         health_kv(
             ui,
+            "Output mode",
+            if self.latest.active { "CHAOS ENGINE ACTIVE".into() } else { "EXACT PASS-THROUGH".into() },
+        );
+        health_kv(
+            ui,
             "CPU (host capacity)",
             match (self.latest.process.cpu_percent, self.latest.process.cpu_core_percent) {
                 (Some(host), Some(core)) => format!("{host:.1}%  ·  {:.2} cores", core / 100.0),
@@ -918,6 +939,26 @@ impl WorkbenchApp {
 
     fn impact_panel(&self, ui: &mut egui::Ui) {
         ui.label(section_title("EXPERIMENT IMPACT"));
+        if !self.latest.active {
+            let (label, color) = if self.armed {
+                ("ARMED — NO CHAOS RUNNING", AMBER)
+            } else {
+                ("NO CHAOS RUN ACTIVE", GREEN)
+            };
+            status_strip(ui, label, color);
+            ui.add_space(5.0);
+            ui.label(
+                RichText::new("Source/stream anomalies are baseline health only; they are not attributed to chaos until RUN CHAOS is active.")
+                    .small()
+                    .color(MUTED),
+            );
+            impact_row(ui, "Transport loss", 0.0, "N/A".into(), CYAN);
+            impact_row(ui, "Protocol impact", 0.0, "N/A".into(), BLUE);
+            impact_row(ui, "Signal Δ", 0.0, "N/A".into(), MAGENTA);
+            impact_row(ui, "Waveform decorrelation", 0.0, "N/A".into(), GREEN);
+            return;
+        }
+
         let loss = if self.latest.engine.seen > 0 {
             Some(self.latest.engine.dropped as f64 / self.latest.engine.seen as f64)
         } else {
@@ -1010,7 +1051,7 @@ impl WorkbenchApp {
                 let w1 = cols[1].available_width();
                 let w2 = cols[2].available_width();
                 metric_card(&mut cols[0], w0, "CLEAN PPS", value_or_dash(self.latest.clean.pps, self.latest.clean.packets > 0, 1), GREEN, &self.clean_pps_history);
-                metric_card(&mut cols[1], w1, "CHAOS PPS", value_or_dash(self.latest.chaos.pps, self.latest.chaos.packets > 0, 1), BLUE, &self.chaos_pps_history);
+                metric_card(&mut cols[1], w1, if self.latest.active { "CHAOS OUT PPS" } else { "OUTPUT PPS" }, value_or_dash(self.latest.chaos.pps, self.latest.chaos.packets > 0, 1), BLUE, &self.chaos_pps_history);
                 metric_card(&mut cols[2], w2, "PPS DELTA", if self.latest.clean.packets > 0 { format!("{:+.1}%", pps_delta(self.latest.clean.pps, self.latest.chaos.pps)) } else { "—".into() }, CYAN, &self.delta_history);
             });
             ui.add_space(6.0);
@@ -1029,7 +1070,7 @@ impl WorkbenchApp {
                     cols[3].available_width(), cols[4].available_width(), cols[5].available_width(),
                 ];
                 metric_card(&mut cols[0], widths[0], "CLEAN PPS", value_or_dash(self.latest.clean.pps, self.latest.clean.packets > 0, 1), GREEN, &self.clean_pps_history);
-                metric_card(&mut cols[1], widths[1], "CHAOS PPS", value_or_dash(self.latest.chaos.pps, self.latest.chaos.packets > 0, 1), BLUE, &self.chaos_pps_history);
+                metric_card(&mut cols[1], widths[1], if self.latest.active { "CHAOS OUT PPS" } else { "OUTPUT PPS" }, value_or_dash(self.latest.chaos.pps, self.latest.chaos.packets > 0, 1), BLUE, &self.chaos_pps_history);
                 metric_card(&mut cols[2], widths[2], "PPS DELTA", if self.latest.clean.packets > 0 { format!("{:+.1}%", pps_delta(self.latest.clean.pps, self.latest.chaos.pps)) } else { "—".into() }, CYAN, &self.delta_history);
                 metric_card(&mut cols[3], widths[3], "SEQ GAPS", if self.latest.chaos.packets > 0 { self.latest.chaos.seq_gaps.to_string() } else { "—".into() }, if self.latest.chaos.seq_gaps == 0 { BLUE } else { AMBER }, &self.seq_history);
                 metric_card(&mut cols[4], widths[4], "TS / GLITCH", if self.latest.chaos.packets > 0 { format!("{} / {}", self.latest.chaos.ts_drops, self.latest.chaos.glitches) } else { "—".into() }, if self.latest.chaos.ts_drops + self.latest.chaos.glitches == 0 { BLUE } else { AMBER }, &self.timing_history);
@@ -1046,7 +1087,7 @@ impl WorkbenchApp {
         // v0.5 used fixed plot heights, which looked acceptable in screenshots
         // but forced the bottom row below the fold on RS5 when GNOME/RDP DPI
         // scaling reduced the number of logical egui points available.
-        let usable_h = ui.available_height().max(300.0);
+        let usable_h = (ui.available_height() - 34.0).max(300.0);
         let (waterfall_outer, middle_outer) = if usable_h < 520.0 {
             (
                 (usable_h * 0.38).clamp(140.0, 205.0),
@@ -1077,10 +1118,19 @@ impl WorkbenchApp {
         });
         ui.add_space(8.0);
         ui.columns(2, |cols| {
-            cols[0].set_min_height(bottom_outer);
-            cols[1].set_min_height(bottom_outer);
-            instrument_panel(&mut cols[0], "EMITTER / SOURCE TABLE", CYAN, |ui| self.source_table_panel(ui, table_inner));
-            instrument_panel(&mut cols[1], "CLEAN ↔ CHAOS COMPARISON", MAGENTA, |ui| self.comparison_panel(ui, table_inner));
+            let w0 = cols[0].available_width();
+            let w1 = cols[1].available_width();
+            cols[0].allocate_ui_with_layout(
+                egui::vec2(w0, bottom_outer),
+                egui::Layout::top_down(Align::Min),
+                |ui| instrument_panel(ui, "EMITTER / SOURCE TABLE", CYAN, |ui| self.source_table_panel(ui, table_inner)),
+            );
+            let comparison_title = if self.latest.active { "CLEAN ↔ CHAOS IMPACT" } else { "CLEAN ↔ PASS-THROUGH CONSISTENCY" };
+            cols[1].allocate_ui_with_layout(
+                egui::vec2(w1, bottom_outer),
+                egui::Layout::top_down(Align::Min),
+                |ui| instrument_panel(ui, comparison_title, MAGENTA, |ui| self.comparison_panel(ui, table_inner)),
+            );
         });
     }
 
@@ -1210,7 +1260,7 @@ impl WorkbenchApp {
             .show(ui, |p| {
                 if self.show_chaos && !chaos.dbfs.is_empty() {
                     p.line(Line::new(PlotPoints::from_iter(chaos.freq_khz.iter().zip(chaos.dbfs.iter()).map(|(&x, &y)| [x, y])))
-                        .name("Chaos").color(CYAN));
+                        .name(if self.latest.active { "Chaos output" } else { "Pass-through" }).color(CYAN));
                 }
                 if self.show_clean && !clean.dbfs.is_empty() {
                     p.line(Line::new(PlotPoints::from_iter(clean.freq_khz.iter().zip(clean.dbfs.iter()).map(|(&x, &y)| [x, y])))
@@ -1256,7 +1306,7 @@ impl WorkbenchApp {
             .include_y(y)
             .show(ui, |p| {
                 if self.show_chaos && !chaos.is_empty() {
-                    p.line(Line::new(PlotPoints::from(chaos)).name("Chaos").color(CYAN));
+                    p.line(Line::new(PlotPoints::from(chaos)).name(if self.latest.active { "Chaos output" } else { "Pass-through" }).color(CYAN));
                 }
                 if self.show_clean && !clean.is_empty() {
                     p.line(Line::new(PlotPoints::from(clean)).name("Clean").color(GREEN));
@@ -1277,7 +1327,8 @@ impl WorkbenchApp {
             source_tab(ui, &mut self.source_table_tab, SourceTableTab::Suppressed, "SUPPRESSED");
         });
         ui.separator();
-        egui::ScrollArea::vertical().max_height(table_h).show(ui, |ui| {
+        ui.label(RichText::new("scroll ↕ / shift+wheel ↔").size(9.0).color(MUTED));
+        egui::ScrollArea::both().max_height(table_h).auto_shrink([false, false]).show(ui, |ui| {
             match self.source_table_tab {
                 SourceTableTab::Active => self.active_source_table(ui),
                 SourceTableTab::Planned => self.planned_source_table(ui),
@@ -1336,12 +1387,22 @@ impl WorkbenchApp {
     }
 
     fn comparison_panel(&self, ui: &mut egui::Ui, panel_h: f32) {
-        egui::ScrollArea::vertical().max_height(panel_h).auto_shrink([false, false]).show(ui, |ui| {
-            ui.label(RichText::new("LIVE CLEAN ↔ CHAOS DELTAS").size(9.5).strong().color(MUTED));
+        egui::ScrollArea::both().max_height(panel_h).auto_shrink([false, false]).show(ui, |ui| {
+            if self.latest.active {
+                ui.label(RichText::new("LIVE CLEAN ↔ CHAOS DELTAS").size(9.5).strong().color(MUTED));
+            } else {
+                status_strip(ui, "PASS-THROUGH — NO FAULT ATTRIBUTION", GREEN);
+                ui.label(
+                    RichText::new("The output branch is a byte-for-byte pass-through path while the engine is inactive. Differences here are branch-consistency diagnostics, not evidence of chaos.")
+                        .small()
+                        .color(MUTED),
+                );
+            }
+            ui.add_space(4.0);
             egui::Grid::new("comparison_grid").striped(true).min_col_width(76.0).show(ui, |ui| {
                 ui.strong("Metric");
                 ui.strong("Clean");
-                ui.strong("Chaos");
+                ui.strong(if self.latest.active { "Chaos" } else { "Output" });
                 ui.strong("Delta");
                 ui.end_row();
                 comparison_row(ui, "Total Power (dBFS)", self.latest.analysis.comparison.clean.total_power_dbfs, self.latest.analysis.comparison.chaos.total_power_dbfs, "dB");
@@ -1350,14 +1411,18 @@ impl WorkbenchApp {
                 comparison_row(ui, "Spectral Flatness", self.latest.analysis.comparison.clean.spectral_flatness, self.latest.analysis.comparison.chaos.spectral_flatness, "");
             });
             ui.add_space(6.0);
-            ui.horizontal_wrapped(|ui| {
-                counter_chip(ui, "seen", self.latest.engine.seen);
-                counter_chip(ui, "emitted", self.latest.engine.emitted);
-                counter_chip(ui, "dropped", self.latest.engine.dropped);
-                counter_chip(ui, "mutated", self.latest.engine.mutated);
-                counter_chip(ui, "reordered", self.latest.engine.reordered);
-                counter_chip(ui, "ghosts", self.latest.engine.emitter_clones);
-            });
+            if self.latest.active {
+                ui.horizontal_wrapped(|ui| {
+                    counter_chip(ui, "seen", self.latest.engine.seen);
+                    counter_chip(ui, "emitted", self.latest.engine.emitted);
+                    counter_chip(ui, "dropped", self.latest.engine.dropped);
+                    counter_chip(ui, "mutated", self.latest.engine.mutated);
+                    counter_chip(ui, "reordered", self.latest.engine.reordered);
+                    counter_chip(ui, "ghosts", self.latest.engine.emitter_clones);
+                });
+            } else {
+                ui.label(RichText::new("Experiment counters are hidden until RUN CHAOS is active.").small().color(MUTED));
+            }
         });
     }
 
@@ -1371,13 +1436,13 @@ impl WorkbenchApp {
     }
 
     fn health_view(&self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("CLEAN ↔ CHAOS HEALTH SCORECARD").size(15.0).strong().color(TEXT));
+        ui.label(RichText::new(if self.latest.active { "CLEAN ↔ CHAOS HEALTH SCORECARD" } else { "CLEAN ↔ OUTPUT HEALTH SCORECARD" }).size(15.0).strong().color(TEXT));
         ui.add_space(7.0);
         panel_box(ui, |ui| {
             egui::Grid::new("health_scorecard_grid").striped(true).min_col_width(125.0).show(ui, |ui| {
                 ui.strong("Metric");
                 ui.strong("Clean");
-                ui.strong("Chaos");
+                ui.strong(if self.latest.active { "Chaos" } else { "Output" });
                 ui.strong("Delta / state");
                 ui.end_row();
                 health_metric_row(ui, "Packets/s", Some(self.latest.clean.pps), Some(self.latest.chaos.pps));

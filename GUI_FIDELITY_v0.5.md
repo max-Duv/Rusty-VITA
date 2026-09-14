@@ -11,3 +11,10 @@ The v0.5.2 GUI specifically addresses the RS5 screenshot where the previous buil
 5. **Source-table clutter**: local FFT texture created too many tracked rows. v0.5.2 adds local-prominence rejection and bounds the visible tracker set.
 
 All scaling changes are display transforms only. No synthetic RF values are inserted.
+
+
+## v0.5.3 follow-up — constrained lower panes and inspector
+
+v0.5.3 adds an explicit bottom safe area for RDP/taskbar overlays, constrains the lower analysis row to the available viewport, makes both the emitter/source table and the clean/output comparison panes two-axis scroll areas, and adds a SHOW/HIDE INSPECTOR control for the right rail.
+
+It also removes ambiguous chaos attribution in passive mode: the output branch is labeled pass-through while the engine is inactive, experiment impact is N/A until RUN CHAOS is active, and STOP cancels pending delayed/reordered packets and restores an exact pass-through engine state.
