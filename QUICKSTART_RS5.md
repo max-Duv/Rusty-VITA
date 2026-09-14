@@ -1,9 +1,9 @@
-# RS5 Quick Start — v0.4
+# RS5 Quick Start — v0.5
 
 ## 1. Enter the project
 
 ```bash
-cd vita49_chaos_rust_v0.4
+cd vita49_chaos_rust_v0.5
 ```
 
 ## 2. Host preflight
@@ -24,10 +24,10 @@ rustc --version
 
 ```bash
 sudo -v
-./scripts/probe_bx01.sh 5
+./scripts/probe_bx01.sh 30
 ```
 
-Do not proceed to fault experiments until the probe shows valid Bx01 geometry, a rate near 500 packets/s, and zero parser errors.
+The v0.5 probe reports both wall-clock delivery rate and capture-time wire rate. Use the **wire rate** (`frame.time_epoch`) for source-rate validation; wall rate includes TShark startup/drain overhead. Review the geometry histogram before fault experiments.
 
 ## 5. Launch the Operator Workstation
 

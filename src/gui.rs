@@ -9,7 +9,6 @@ use egui_plot::{Legend, Line, Plot, PlotPoints};
 
 use crate::analytics::EmitterObservation;
 use crate::chaos::{ChaosConfig, SeqMode, SignalConfig};
-use crate::dsp::full_scale;
 use crate::profile::{InputMode, ResolvedConfig};
 use crate::scenario;
 use crate::state::{DisplayEvent, WorkerCommand, WorkerUpdate};
@@ -79,8 +78,8 @@ struct PlannedGhost {
 pub fn run(cfg: ResolvedConfig) -> Result<()> {
     let native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1680.0, 980.0])
-            .with_min_inner_size([1280.0, 760.0]),
+            .with_inner_size([1760.0, 1040.0])
+            .with_min_inner_size([1360.0, 820.0]),
         ..Default::default()
     };
     let title = format!("VITA-49 RF Chaos Workbench — {}", cfg.stream.name);
@@ -114,6 +113,8 @@ struct WorkbenchApp {
     waterfall_ceil: f64,
     waterfall_history_cols: usize,
     freeze_waterfall: bool,
+    waterfall_auto_levels: bool,
+    spectrum_auto_range: bool,
     waveform_ms: f64,
     show_clean: bool,
     show_chaos: bool,
@@ -168,6 +169,8 @@ impl WorkbenchApp {
             waterfall_ceil: 0.0,
             waterfall_history_cols: 300,
             freeze_waterfall: false,
+            waterfall_auto_levels: true,
+            spectrum_auto_range: true,
             waveform_ms: 4.0,
             show_clean: true,
             show_chaos: true,
@@ -233,6 +236,15 @@ impl WorkbenchApp {
             }
         }
         self.prev_worker_active = self.latest.active;
+
+        if self.waterfall_auto_levels {
+            if let Some((target_floor, target_ceil)) = robust_display_range(&self.latest.analysis.chaos_spectrum.dbfs) {
+                // Slow the level motion enough to avoid visual pumping while still adapting
+                // to real changes in the RF scene. This is a display transform only.
+                self.waterfall_floor = smooth_value(self.waterfall_floor, target_floor, 0.18);
+                self.waterfall_ceil = smooth_value(self.waterfall_ceil, target_ceil, 0.18);
+            }
+        }
 
         if !self.freeze_waterfall {
             let mut db = self.latest.analysis.chaos_spectrum.dbfs.clone();
@@ -375,7 +387,12 @@ impl WorkbenchApp {
                 }
             }
         }
+        let clean_anomalies = self.latest.clean.seq_gaps
+            + self.latest.clean.reorders
+            + self.latest.clean.ts_drops
+            + self.latest.clean.glitches;
         if self.latest.clean.parse_errors > 0
+            || clean_anomalies > 0
             || self.latest.source.queue_depth > 512
             || self.profile_matches_last_packet() == Some(false)
         {
@@ -387,7 +404,7 @@ impl WorkbenchApp {
 
     fn top_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("operator_header")
-            .exact_height(82.0)
+            .exact_height(92.0)
             .frame(
                 egui::Frame::none()
                     .fill(Color32::from_rgb(4, 12, 18))
@@ -400,13 +417,13 @@ impl WorkbenchApp {
                     ui.vertical(|ui| {
                         ui.label(
                             RichText::new("VITA-49 RF CHAOS WORKBENCH")
-                                .size(18.5)
+                                .size(20.5)
                                 .strong()
                                 .color(Color32::from_rgb(112, 229, 236)),
                         );
                         ui.label(
                             RichText::new("FAULT INJECTION  ·  SPECTRUM OBSERVATION  ·  SYSTEM RESILIENCE")
-                                .size(9.5)
+                                .size(10.0)
                                 .color(MUTED),
                         );
                     });
@@ -424,7 +441,7 @@ impl WorkbenchApp {
                         &format!("{}:{}", self.cfg.stream.group, self.cfg.stream.dst_port),
                         if input_fresh { GREEN } else { AMBER },
                     );
-                    header_field(ui, "RATE", &format!("{:.0} kSa/s", self.cfg.stream.sample_rate / 1000.0), CYAN);
+                    header_field(ui, "NOMINAL RATE", &format!("{:.0} kSa/s", self.cfg.stream.sample_rate / 1000.0), CYAN);
                     header_field(ui, "INTERFACE", &self.cfg.stream.interface, BLUE);
                     let (mode, mode_color) = match &self.cfg.input {
                         InputMode::Live { .. } => ("LIVE", GREEN),
@@ -506,7 +523,7 @@ impl WorkbenchApp {
 
     fn bottom_bar(&self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("operator_footer")
-            .exact_height(28.0)
+            .exact_height(30.0)
             .frame(
                 egui::Frame::none()
                     .fill(Color32::from_rgb(4, 11, 16))
@@ -568,58 +585,74 @@ impl WorkbenchApp {
 
     fn left_panel(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("operator_controls")
-            .resizable(true)
-            .default_width(260.0)
-            .min_width(230.0)
-            .max_width(360.0)
-            .frame(egui::Frame::none().fill(Color32::from_rgb(6, 15, 21)).stroke(Stroke::new(1.0_f32, BORDER)))
+            .resizable(false)
+            .default_width(292.0)
+            .min_width(292.0)
+            .max_width(292.0)
+            .frame(
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(6, 15, 21))
+                    .stroke(Stroke::new(1.0_f32, BORDER))
+                    .inner_margin(egui::Margin::same(8.0)),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     control_tab(ui, &mut self.control_tab, ControlTab::Experiment, "EXPERIMENT");
                     control_tab(ui, &mut self.control_tab, ControlTab::Protocol, "PROTOCOL");
                     control_tab(ui, &mut self.control_tab, ControlTab::System, "SYSTEM");
                 });
-                ui.separator();
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    match self.control_tab {
-                        ControlTab::Experiment => {
-                            self.experiment_controls(ui);
-                            ui.add_space(8.0);
-                            self.network_controls(ui);
-                            ui.add_space(8.0);
-                            self.transport_controls(ui);
-                            ui.add_space(8.0);
-                            self.protocol_controls(ui);
+                ui.add_space(5.0);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        match self.control_tab {
+                            ControlTab::Experiment => {
+                                control_section(ui, "SCENARIO & RUN CONFIG", |ui| self.experiment_controls(ui));
+                                ui.add_space(7.0);
+                                control_section(ui, "NETWORK SAFETY", |ui| self.network_controls_body(ui));
+                                ui.add_space(7.0);
+                                control_section(ui, "TRANSPORT / FAULT CONTROLS", |ui| self.transport_controls_body(ui));
+                                ui.add_space(7.0);
+                                control_section(ui, "VITA-49 PROTOCOL", |ui| self.protocol_controls_body(ui));
+                            }
+                            ControlTab::Protocol => {
+                                control_section(ui, "VITA-49 PROTOCOL", |ui| self.protocol_controls_body(ui));
+                                ui.add_space(7.0);
+                                control_section(ui, "SIGNAL / RF SCENE", |ui| self.signal_controls_body(ui));
+                            }
+                            ControlTab::System => {
+                                control_section(ui, "SYSTEM / CONSUMER", |ui| self.system_controls_body(ui));
+                                ui.add_space(7.0);
+                                control_section(ui, "CAPTURE DETAILS", |ui| self.capture_details_body(ui));
+                            }
                         }
-                        ControlTab::Protocol => {
-                            self.protocol_controls(ui);
-                            ui.add_space(8.0);
-                            self.signal_controls(ui);
-                        }
-                        ControlTab::System => {
-                            self.system_controls(ui);
-                            ui.add_space(8.0);
-                            self.capture_details(ui);
-                        }
-                    }
-                    ui.add_space(20.0);
-                });
+                        ui.add_space(18.0);
+                    });
             });
     }
 
     fn right_panel(&mut self, ctx: &egui::Context) {
         egui::SidePanel::right("operator_health_rail")
-            .resizable(true)
-            .default_width(270.0)
-            .min_width(235.0)
-            .max_width(380.0)
-            .frame(egui::Frame::none().fill(Color32::from_rgb(6, 15, 21)).stroke(Stroke::new(1.0_f32, BORDER)))
+            .resizable(false)
+            .default_width(318.0)
+            .min_width(318.0)
+            .max_width(318.0)
+            .frame(
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(6, 15, 21))
+                    .stroke(Stroke::new(1.0_f32, BORDER))
+                    .inner_margin(egui::Margin::same(8.0)),
+            )
             .show(ctx, |ui| {
-                panel_box(ui, |ui| self.system_health_panel(ui));
-                ui.add_space(8.0);
-                panel_box(ui, |ui| self.impact_panel(ui));
-                ui.add_space(8.0);
-                panel_box(ui, |ui| self.event_log_panel(ui));
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        panel_box(ui, |ui| self.system_health_panel(ui));
+                        ui.add_space(8.0);
+                        panel_box(ui, |ui| self.impact_panel(ui));
+                        ui.add_space(8.0);
+                        panel_box(ui, |ui| self.event_log_panel(ui));
+                    });
             });
     }
 
@@ -656,8 +689,7 @@ impl WorkbenchApp {
         }
     }
 
-    fn network_controls(&mut self, ui: &mut egui::Ui) {
-        section_heading(ui, "NETWORK SAFETY");
+    fn network_controls_body(&mut self, ui: &mut egui::Ui) {
         ui.add_enabled_ui(self.cfg.emit.allowed, |ui| {
             ui.checkbox(&mut self.emit_requested, "Enable TEST output");
         });
@@ -673,8 +705,7 @@ impl WorkbenchApp {
         }
     }
 
-    fn transport_controls(&mut self, ui: &mut egui::Ui) {
-        section_heading(ui, "TRANSPORT / FAULT CONTROLS");
+    fn transport_controls_body(&mut self, ui: &mut egui::Ui) {
         compact_checkbox(ui, &mut self.chaos.transport.blackout, "Total blackout");
         compact_f64(ui, "Random drop", "%", &mut self.chaos.transport.drop_pct, 0.0, 100.0, 0.5);
         compact_checkbox(ui, &mut self.chaos.transport.burst_enabled, "Repeating burst loss");
@@ -699,8 +730,7 @@ impl WorkbenchApp {
         compact_f64(ui, "Throttle", "pps", &mut self.chaos.transport.throttle_pps, 0.0, 1_000_000.0, 10.0);
     }
 
-    fn protocol_controls(&mut self, ui: &mut egui::Ui) {
-        section_heading(ui, "VITA-49 PROTOCOL");
+    fn protocol_controls_body(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Sequence mode").small().color(TEXT));
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
@@ -751,8 +781,7 @@ impl WorkbenchApp {
         compact_f64(ui, "Payload bit flip", "%", &mut self.chaos.protocol.payload_bitflip_pct, 0.0, 100.0, 0.1);
     }
 
-    fn signal_controls(&mut self, ui: &mut egui::Ui) {
-        section_heading(ui, "SIGNAL / RF SCENE");
+    fn signal_controls_body(&mut self, ui: &mut egui::Ui) {
         compact_checkbox(ui, &mut self.chaos.signal.enabled, "Enable signal mutation");
         compact_f64(ui, "Gain", "×", &mut self.chaos.signal.gain, 0.0, 8.0, 0.05);
         compact_f64(ui, "DC offset", "", &mut self.chaos.signal.dc_offset, -1.0e12, 1.0e12, 100.0);
@@ -782,8 +811,7 @@ impl WorkbenchApp {
         compact_f64(ui, "Phase rotation", "°", &mut self.chaos.signal.phase_deg, -3600.0, 3600.0, 1.0);
     }
 
-    fn system_controls(&mut self, ui: &mut egui::Ui) {
-        section_heading(ui, "SYSTEM / CONSUMER");
+    fn system_controls_body(&mut self, ui: &mut egui::Ui) {
         compact_f64(ui, "Processing delay", "ms", &mut self.chaos.system.processing_delay_ms, 0.0, 60_000.0, 1.0);
         ui.horizontal(|ui| {
             ui.label(RichText::new("Consumer stall every").small().color(TEXT));
@@ -794,8 +822,7 @@ impl WorkbenchApp {
         compact_f64(ui, "Consumer stall", "ms", &mut self.chaos.system.consumer_stall_ms, 0.0, 60_000.0, 1.0);
     }
 
-    fn capture_details(&self, ui: &mut egui::Ui) {
-        section_heading(ui, "CAPTURE / SOURCE");
+    fn capture_details_body(&self, ui: &mut egui::Ui) {
         kv(ui, "Backend", &self.latest.source.backend);
         kv(ui, "Packets", &self.latest.source.rx_packets.to_string());
         kv(ui, "Bytes", &human_bytes(self.latest.source.rx_bytes));
@@ -818,7 +845,15 @@ impl WorkbenchApp {
         ui.add_space(5.0);
         health_kv(ui, "Input rate", optional_rate(self.latest.clean.samples_per_sec, "Sa/s"));
         health_kv(ui, "Output rate", optional_rate(self.latest.chaos.samples_per_sec, "Sa/s"));
-        health_kv(ui, "CPU (process)", self.latest.process.cpu_percent.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "—".into()));
+        health_kv(
+            ui,
+            "CPU (host capacity)",
+            match (self.latest.process.cpu_percent, self.latest.process.cpu_core_percent) {
+                (Some(host), Some(core)) => format!("{host:.1}%  ·  {:.2} cores", core / 100.0),
+                (Some(host), None) => format!("{host:.1}%"),
+                _ => "—".into(),
+            },
+        );
         health_kv(ui, "Memory", self.latest.process.memory_bytes.map(human_bytes).unwrap_or_else(|| "—".into()));
         health_kv(ui, "Queue depth", self.latest.source.queue_depth.to_string());
         health_kv(ui, "Dropped packets", self.latest.engine.dropped.to_string());
@@ -931,9 +966,10 @@ impl WorkbenchApp {
 
     fn metrics_row(&self, ui: &mut egui::Ui) {
         let width = ui.available_width();
-        let cards = 6.0;
-        let w = ((width - 5.0 * 7.0) / cards).max(115.0);
+        let gap = 8.0;
+        let w = ((width - gap * 5.0) / 6.0).max(122.0);
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
             metric_card(ui, w, "CLEAN PPS", value_or_dash(self.latest.clean.pps, self.latest.clean.packets > 0, 1), GREEN, &self.clean_pps_history);
             metric_card(ui, w, "CHAOS PPS", value_or_dash(self.latest.chaos.pps, self.latest.chaos.packets > 0, 1), BLUE, &self.chaos_pps_history);
             metric_card(ui, w, "PPS DELTA", if self.latest.clean.packets > 0 { format!("{:+.1}%", pps_delta(self.latest.clean.pps, self.latest.chaos.pps)) } else { "—".into() }, CYAN, &self.delta_history);
@@ -945,75 +981,105 @@ impl WorkbenchApp {
 
     fn monitor_view(&mut self, ui: &mut egui::Ui) {
         self.analysis_tabs(ui);
-        ui.add_space(6.0);
-        panel_box(ui, |ui| self.waterfall_panel(ui));
-        ui.add_space(7.0);
+        ui.add_space(8.0);
+        instrument_panel(ui, "RF WATERFALL / LIVE SPECTRAL HISTORY", CYAN, |ui| self.waterfall_panel(ui));
+        ui.add_space(8.0);
         ui.columns(2, |cols| {
-            panel_box(&mut cols[0], |ui| self.spectrum_panel(ui));
-            panel_box(&mut cols[1], |ui| self.waveform_panel(ui));
+            instrument_panel(&mut cols[0], "SPECTRUM", BLUE, |ui| self.spectrum_panel(ui));
+            instrument_panel(&mut cols[1], "TIME DOMAIN", GREEN, |ui| self.waveform_panel(ui));
         });
-        ui.add_space(7.0);
+        ui.add_space(8.0);
         ui.columns(2, |cols| {
-            panel_box(&mut cols[0], |ui| self.source_table_panel(ui));
-            panel_box(&mut cols[1], |ui| self.comparison_panel(ui));
+            instrument_panel(&mut cols[0], "EMITTER / SOURCE TABLE", CYAN, |ui| self.source_table_panel(ui));
+            instrument_panel(&mut cols[1], "CLEAN ↔ CHAOS COMPARISON", MAGENTA, |ui| self.comparison_panel(ui));
         });
     }
 
     fn analysis_tabs(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            workspace_tab(ui, &mut self.workspace, Workspace::Monitor, "SPECTRUM / WATERFALL");
-            workspace_tab(ui, &mut self.workspace, Workspace::Live, "LIVE ANALYSIS");
-            workspace_tab(ui, &mut self.workspace, Workspace::Health, "HEALTH + SCORECARD");
-            workspace_tab(ui, &mut self.workspace, Workspace::Events, "FAULT EVENTS");
-            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                ui.label(RichText::new("Scale").small().color(MUTED));
-                status_pill(ui, "dBFS", BLUE);
-                ui.label(RichText::new(format!("RBW {:.1} Hz", self.latest.analysis.rbw_hz)).small().monospace().color(MUTED));
-                ui.label(RichText::new(format!("Span {:.1} kHz", self.latest.analysis.span_khz)).small().monospace().color(MUTED));
-                ui.label(RichText::new(format!("Center {:.1} kHz", self.latest.analysis.center_khz)).small().monospace().color(MUTED));
+        egui::Frame::none()
+            .fill(PANEL_2)
+            .stroke(Stroke::new(1.0_f32, BORDER))
+            .rounding(5.0)
+            .inner_margin(egui::Margin::symmetric(8.0, 5.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    workspace_tab(ui, &mut self.workspace, Workspace::Monitor, "SPECTRUM / WATERFALL");
+                    workspace_tab(ui, &mut self.workspace, Workspace::Live, "LIVE ANALYSIS");
+                    workspace_tab(ui, &mut self.workspace, Workspace::Health, "HEALTH + SCORECARD");
+                    workspace_tab(ui, &mut self.workspace, Workspace::Events, "FAULT EVENTS");
+                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        status_pill(ui, "dBFS", BLUE);
+                        ui.label(RichText::new(format!("RBW {:.1} Hz", self.latest.analysis.rbw_hz)).small().monospace().color(MUTED));
+                        ui.separator();
+                        ui.label(RichText::new(format!("SPAN {:.1} kHz", self.latest.analysis.span_khz)).small().monospace().color(MUTED));
+                        ui.separator();
+                        ui.label(RichText::new(format!("CENTER {:.1} kHz", self.latest.analysis.center_khz)).small().monospace().color(MUTED));
+                    });
+                });
             });
-        });
     }
 
     fn waterfall_panel(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(section_title("WATERFALL"));
-            ui.label(RichText::new("frequency →  ·  history ↓  ·  orange row = fault boundary").small().color(MUTED));
+            ui.label(RichText::new("LIVE").size(9.5).strong().color(GREEN));
+            ui.separator();
+            ui.label(RichText::new("frequency →   history ↓").small().color(MUTED));
+            if self.latest.active {
+                ui.separator();
+                ui.label(RichText::new("CHAOS ACTIVE").small().strong().color(RED));
+            }
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Clear").clicked() {
+                if ui.button("CLEAR").clicked() {
                     self.waterfall.clear();
                     self.waterfall_active.clear();
                     self.waterfall_boundary.clear();
                     self.waterfall_tex = None;
                 }
-                ui.checkbox(&mut self.freeze_waterfall, "Hold");
-                ui.label(RichText::new("lines").small().color(MUTED));
-                ui.add(egui::DragValue::new(&mut self.waterfall_history_cols).clamp_range(60..=600));
+                ui.checkbox(&mut self.freeze_waterfall, "HOLD");
+                ui.checkbox(&mut self.waterfall_auto_levels, "AUTO LEVELS");
+                ui.label(RichText::new(format!("{:.0}…{:.0} dBFS", self.waterfall_floor, self.waterfall_ceil)).small().monospace().color(MUTED));
+                ui.add(egui::DragValue::new(&mut self.waterfall_history_cols).clamp_range(90..=900).suffix(" lines"));
             });
         });
-        ui.add_space(5.0);
+        ui.add_space(6.0);
+
         let available = ui.available_width();
-        let legend_w = 42.0;
+        let legend_w = 50.0;
+        let h = 248.0;
         ui.horizontal(|ui| {
             if let Some(tex) = &self.waterfall_tex {
-                egui::Frame::none().fill(Color32::BLACK).stroke(Stroke::new(1.0_f32, BORDER_HI)).show(ui, |ui| {
-                    ui.add(egui::Image::new((tex.id(), egui::vec2((available - legend_w - 8.0).max(200.0), 178.0))));
-                });
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(1, 6, 12))
+                    .stroke(Stroke::new(1.0_f32, BORDER_HI))
+                    .rounding(2.0)
+                    .show(ui, |ui| {
+                        ui.add(egui::Image::new((tex.id(), egui::vec2((available - legend_w - 10.0).max(260.0), h))));
+                    });
             } else {
-                egui::Frame::none().fill(Color32::BLACK).stroke(Stroke::new(1.0_f32, BORDER_HI)).show(ui, |ui| {
-                    ui.allocate_ui(egui::vec2((available - legend_w - 8.0).max(200.0), 178.0), |ui| {
-                        ui.centered_and_justified(|ui| {
-                            ui.label(RichText::new("WAITING FOR VALIDATED VITA SAMPLE DATA").small().color(MUTED));
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(1, 6, 12))
+                    .stroke(Stroke::new(1.0_f32, BORDER_HI))
+                    .rounding(2.0)
+                    .show(ui, |ui| {
+                        ui.allocate_ui(egui::vec2((available - legend_w - 10.0).max(260.0), h), |ui| {
+                            ui.centered_and_justified(|ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.label(RichText::new("WAITING FOR VALIDATED VITA SAMPLE DATA").size(12.0).strong().color(MUTED));
+                                    ui.label(RichText::new("No synthetic display fallback is used.").small().color(MUTED));
+                                });
+                            });
                         });
                     });
-                });
             }
-            draw_color_scale(ui, self.waterfall_floor, self.waterfall_ceil, 178.0);
+            draw_color_scale(ui, self.waterfall_floor, self.waterfall_ceil, h);
         });
+
+        ui.add_space(2.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new(if self.cfg.stream.iq { format!("{:+.1} kHz", -self.latest.analysis.span_khz / 2.0) } else { "0 kHz".into() }).small().monospace().color(MUTED));
+            let minf = if self.cfg.stream.iq { -self.latest.analysis.span_khz / 2.0 } else { 0.0 };
+            let maxf = if self.cfg.stream.iq { self.latest.analysis.span_khz / 2.0 } else { self.latest.analysis.span_khz };
+            ui.label(RichText::new(format!("{minf:+.1} kHz")).small().monospace().color(MUTED));
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                let maxf = if self.cfg.stream.iq { self.latest.analysis.span_khz / 2.0 } else { self.latest.analysis.span_khz };
                 ui.label(RichText::new(format!("{maxf:+.1} kHz")).small().monospace().color(MUTED));
                 ui.label(RichText::new("Frequency").small().color(MUTED));
             });
@@ -1021,62 +1087,84 @@ impl WorkbenchApp {
     }
 
     fn spectrum_panel(&self, ui: &mut egui::Ui) {
+        let clean = &self.latest.analysis.clean_spectrum;
+        let chaos = &self.latest.analysis.chaos_spectrum;
+        let noise_floor = median_finite(&clean.dbfs);
+        let ghosts = self.planned_ghosts();
+        let display_range = if self.spectrum_auto_range {
+            robust_display_range(&chaos.dbfs).or_else(|| robust_display_range(&clean.dbfs))
+        } else {
+            Some((-120.0, 0.0))
+        };
+        let (ymin, ymax) = display_range.unwrap_or((-120.0, 0.0));
+
         ui.horizontal(|ui| {
-            ui.label(section_title("SPECTRUM"));
-            ui.label(RichText::new("live / dBFS").small().color(MUTED));
+            ui.label(RichText::new("LIVE / dBFS").size(9.5).strong().color(CYAN));
+            if let Some(nf) = noise_floor {
+                ui.label(RichText::new(format!("NOISE {:.1} dBFS", nf)).small().monospace().color(MUTED));
+            }
+            if let Some(pk) = self.latest.analysis.comparison.clean.peak_dbfs {
+                ui.label(RichText::new(format!("PEAK {:.1} dBFS", pk)).small().monospace().color(MUTED));
+            }
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                 ui.label(RichText::new(format!("RBW {:.1} Hz", self.latest.analysis.rbw_hz)).small().monospace().color(MUTED));
             });
         });
-        let clean = &self.latest.analysis.clean_spectrum;
-        let chaos = &self.latest.analysis.chaos_spectrum;
-        let ghosts = self.planned_ghosts();
-        let noise_floor = median_finite(&clean.dbfs);
+
         Plot::new("operator_spectrum")
-            .height(210.0)
+            .height(238.0)
             .legend(Legend::default())
             .x_axis_label("Frequency (kHz)")
             .y_axis_label("Magnitude (dBFS)")
-            .include_y(-120.0)
-            .include_y(0.0)
+            .include_y(ymin)
+            .include_y(ymax)
             .show(ui, |p| {
                 if self.show_chaos && !chaos.dbfs.is_empty() {
-                    p.line(Line::new(PlotPoints::from_iter(chaos.freq_khz.iter().zip(chaos.dbfs.iter()).map(|(&x, &y)| [x, y]))).name("Chaos").color(CYAN));
+                    p.line(Line::new(PlotPoints::from_iter(chaos.freq_khz.iter().zip(chaos.dbfs.iter()).map(|(&x, &y)| [x, y])))
+                        .name("Chaos").color(CYAN));
                 }
                 if self.show_clean && !clean.dbfs.is_empty() {
-                    p.line(Line::new(PlotPoints::from_iter(clean.freq_khz.iter().zip(clean.dbfs.iter()).map(|(&x, &y)| [x, y]))).name("Clean").color(GREEN));
+                    p.line(Line::new(PlotPoints::from_iter(clean.freq_khz.iter().zip(clean.dbfs.iter()).map(|(&x, &y)| [x, y])))
+                        .name("Clean").color(GREEN));
                 }
                 if let Some(nf) = noise_floor {
                     if let (Some(x0), Some(x1)) = (clean.freq_khz.first(), clean.freq_khz.last()) {
-                        p.line(Line::new(PlotPoints::from(vec![[*x0, nf], [*x1, nf]])).name("Noise floor").color(Color32::from_gray(145)));
+                        p.line(Line::new(PlotPoints::from(vec![[*x0, nf], [*x1, nf]])).name("Noise floor").color(Color32::from_gray(125)));
                     }
                 }
-                for e in &self.latest.analysis.emitters {
-                    p.line(Line::new(PlotPoints::from(vec![[e.frequency_khz, -120.0], [e.frequency_khz, 0.0]])).color(BLUE));
+                for e in self.latest.analysis.emitters.iter().take(16) {
+                    p.line(Line::new(PlotPoints::from(vec![[e.frequency_khz, ymin], [e.frequency_khz, ymax]])).color(BLUE));
                 }
-                for g in ghosts.iter().take(24) {
-                    p.line(Line::new(PlotPoints::from(vec![[g.target_khz, -120.0], [g.target_khz, 0.0]])).color(MAGENTA));
+                for g in ghosts.iter().take(16) {
+                    p.line(Line::new(PlotPoints::from(vec![[g.target_khz, ymin], [g.target_khz, ymax]])).color(MAGENTA));
                 }
             });
     }
 
     fn waveform_panel(&self, ui: &mut egui::Ui) {
+        let clean = waveform_trace(&self.latest.clean_recent, self.cfg.stream.sample_rate, self.waveform_ms, 1200);
+        let chaos = waveform_trace(&self.latest.chaos_recent, self.cfg.stream.sample_rate, self.waveform_ms, 1200);
+        let peak = waveform_peak(&clean).max(waveform_peak(&chaos));
+        let y = if peak.is_finite() && peak > 0.0 { peak * 1.12 } else { 1.0 };
+        let fs_frac = if let Some(pk) = self.latest.analysis.comparison.clean.peak_dbfs {
+            format!("{:.2} dBFS", pk)
+        } else { "—".into() };
+
         ui.horizontal(|ui| {
-            ui.label(section_title("TIME DOMAIN WAVEFORM"));
+            ui.label(RichText::new(format!("WINDOW {:.1} ms", self.waveform_ms)).size(9.5).strong().color(GREEN));
+            ui.label(RichText::new(format!("PEAK {fs_frac}")).small().monospace().color(MUTED));
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                ui.label(RichText::new(format!("{:.1} ms", self.waveform_ms)).small().monospace().color(MUTED));
+                ui.label(RichText::new("RAW SAMPLE UNITS").small().color(MUTED));
             });
         });
-        let full = full_scale(self.cfg.format).max(1.0);
-        let clean = normalized_waveform(&self.latest.clean_recent, self.cfg.stream.sample_rate, self.waveform_ms, full, 900);
-        let chaos = normalized_waveform(&self.latest.chaos_recent, self.cfg.stream.sample_rate, self.waveform_ms, full, 900);
+
         Plot::new("operator_waveform")
-            .height(210.0)
+            .height(238.0)
             .legend(Legend::default())
             .x_axis_label("Time (ms)")
-            .y_axis_label("Normalized amplitude")
-            .include_y(-1.05)
-            .include_y(1.05)
+            .y_axis_label("Sample amplitude")
+            .include_y(-y)
+            .include_y(y)
             .show(ui, |p| {
                 if self.show_chaos && !chaos.is_empty() {
                     p.line(Line::new(PlotPoints::from(chaos)).name("Chaos").color(CYAN));
@@ -1089,9 +1177,9 @@ impl WorkbenchApp {
 
     fn source_table_panel(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(section_title("EMITTER / SOURCE TABLE"));
+            ui.label(RichText::new(format!("{} tracked sources", self.latest.analysis.emitters.len())).small().monospace().color(MUTED));
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                ui.label(RichText::new(format!("{} sources", self.latest.analysis.emitters.len())).small().monospace().color(MUTED));
+                ui.label(RichText::new("detected from live FFT only").small().color(MUTED));
             });
         });
         ui.horizontal(|ui| {
@@ -1159,7 +1247,7 @@ impl WorkbenchApp {
     }
 
     fn comparison_panel(&self, ui: &mut egui::Ui) {
-        ui.label(section_title("COMPARISON METRICS"));
+        ui.label(RichText::new("LIVE CLEAN ↔ CHAOS DELTAS").size(9.5).strong().color(MUTED));
         egui::Grid::new("comparison_grid").striped(true).min_col_width(76.0).show(ui, |ui| {
             ui.strong("Metric");
             ui.strong("Clean");
@@ -1331,23 +1419,34 @@ fn install_theme(ctx: &egui::Context) {
     style.visuals = egui::Visuals::dark();
     style.visuals.panel_fill = BG;
     style.visuals.window_fill = PANEL;
-    style.visuals.extreme_bg_color = Color32::from_rgb(3, 9, 13);
+    style.visuals.extreme_bg_color = Color32::from_rgb(2, 7, 11);
     style.visuals.faint_bg_color = PANEL_2;
     style.visuals.code_bg_color = PANEL_2;
     style.visuals.widgets.noninteractive.bg_fill = PANEL;
     style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER);
     style.visuals.widgets.inactive.bg_fill = PANEL_2;
     style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, BORDER);
-    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(14, 39, 51);
+    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(15, 42, 55);
     style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, BORDER_HI);
-    style.visuals.widgets.active.bg_fill = Color32::from_rgb(15, 49, 61);
+    style.visuals.widgets.active.bg_fill = Color32::from_rgb(14, 53, 66);
     style.visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, CYAN);
-    style.visuals.selection.bg_fill = Color32::from_rgb(11, 67, 84);
+    style.visuals.selection.bg_fill = Color32::from_rgb(9, 73, 91);
     style.visuals.selection.stroke = Stroke::new(1.0_f32, CYAN);
-    style.spacing.item_spacing = egui::vec2(6.0, 4.0);
-    style.spacing.button_padding = egui::vec2(10.0, 5.0);
-    style.spacing.interact_size.y = 24.0;
-    style.visuals.window_rounding = 3.0.into();
+    style.visuals.window_rounding = 5.0.into();
+
+    // Explicit typography is important over RDP/VNC and high-DPI Linux sessions.
+    // The previous GUI inherited egui's compact defaults, which made the real
+    // application look much smaller and flatter than the design reference.
+    style.text_styles.insert(egui::TextStyle::Heading, FontId::new(19.0, FontFamily::Proportional));
+    style.text_styles.insert(egui::TextStyle::Body, FontId::new(12.5, FontFamily::Proportional));
+    style.text_styles.insert(egui::TextStyle::Button, FontId::new(12.0, FontFamily::Proportional));
+    style.text_styles.insert(egui::TextStyle::Small, FontId::new(10.5, FontFamily::Proportional));
+    style.text_styles.insert(egui::TextStyle::Monospace, FontId::new(11.5, FontFamily::Monospace));
+
+    style.spacing.item_spacing = egui::vec2(7.0, 5.0);
+    style.spacing.button_padding = egui::vec2(11.0, 6.0);
+    style.spacing.interact_size.y = 27.0;
+    style.spacing.indent = 14.0;
     ctx.set_style(style);
 }
 
@@ -1364,8 +1463,8 @@ fn draw_wave_logo(ui: &mut egui::Ui) {
 fn header_field(ui: &mut egui::Ui, label: &str, value: &str, color: Color32) {
     egui::Frame::none().fill(PANEL).stroke(Stroke::new(1.0_f32, BORDER)).rounding(4.0).inner_margin(egui::Margin::symmetric(9.0, 5.0)).show(ui, |ui| {
         ui.vertical(|ui| {
-            ui.label(RichText::new(label).size(8.5).color(MUTED));
-            ui.label(RichText::new(value).small().monospace().color(color));
+            ui.label(RichText::new(label).size(9.5).strong().color(MUTED));
+            ui.label(RichText::new(value).size(11.5).monospace().color(color));
         });
     });
 }
@@ -1406,11 +1505,55 @@ fn source_tab(ui: &mut egui::Ui, selected: &mut SourceTableTab, value: SourceTab
 }
 
 fn panel_box<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    egui::Frame::none().fill(PANEL).stroke(Stroke::new(1.0_f32, BORDER)).rounding(4.0).inner_margin(egui::Margin::same(8.0)).show(ui, add).inner
+    egui::Frame::none()
+        .fill(PANEL)
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .rounding(6.0)
+        .inner_margin(egui::Margin::same(10.0))
+        .show(ui, add)
+        .inner
+}
+
+fn control_section<R>(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::none()
+        .fill(PANEL)
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .rounding(5.0)
+        .inner_margin(egui::Margin::same(9.0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(title).size(10.5).strong().color(Color32::from_rgb(147, 219, 238)));
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(RichText::new("◆").size(8.0).color(BORDER_HI));
+                });
+            });
+            ui.add_space(3.0);
+            ui.separator();
+            ui.add_space(3.0);
+            add(ui)
+        })
+        .inner
+}
+
+fn instrument_panel<R>(ui: &mut egui::Ui, title: &str, accent: Color32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::none()
+        .fill(PANEL)
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .rounding(6.0)
+        .inner_margin(egui::Margin::same(9.0))
+        .show(ui, |ui| {
+            let (bar_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.0), Sense::hover());
+            ui.painter().rect_filled(bar_rect, 1.5, accent.gamma_multiply(0.75));
+            ui.add_space(4.0);
+            ui.label(RichText::new(title).size(11.5).strong().color(TEXT));
+            ui.add_space(4.0);
+            add(ui)
+        })
+        .inner
 }
 
 fn section_title(text: &str) -> RichText {
-    RichText::new(text).size(11.5).strong().color(Color32::from_rgb(147, 219, 238))
+    RichText::new(text).size(12.0).strong().color(Color32::from_rgb(147, 219, 238))
 }
 
 fn section_heading(ui: &mut egui::Ui, text: &str) {
@@ -1421,7 +1564,7 @@ fn section_heading(ui: &mut egui::Ui, text: &str) {
 
 fn kv(ui: &mut egui::Ui, key: &str, value: &str) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(key).size(9.0).color(MUTED));
+        ui.label(RichText::new(key).size(9.5).strong().color(MUTED));
         ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
             ui.label(RichText::new(value).small().monospace().color(TEXT));
         });
@@ -1455,16 +1598,27 @@ fn compact_f64(ui: &mut egui::Ui, label: &str, unit: &str, value: &mut f64, min:
 }
 
 fn metric_card(ui: &mut egui::Ui, width: f32, label: &str, value: String, color: Color32, history: &VecDeque<f64>) {
-    egui::Frame::none().fill(PANEL_2).stroke(Stroke::new(1.0_f32, BORDER)).rounding(5.0).inner_margin(egui::Margin::symmetric(9.0, 6.0)).show(ui, |ui| {
-        ui.set_width(width);
-        ui.label(RichText::new(label).size(8.5).strong().color(MUTED));
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(value).size(19.0).strong().monospace().color(color));
-            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                draw_sparkline(ui, history, color, egui::vec2((width * 0.42).max(35.0), 22.0));
+    egui::Frame::none()
+        .fill(PANEL_2)
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .rounding(6.0)
+        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+        .show(ui, |ui| {
+            ui.set_width(width);
+            ui.set_min_height(55.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(label).size(9.5).strong().color(MUTED));
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                    ui.colored_label(color, "●");
+                });
+            });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(value).size(21.0).strong().monospace().color(color));
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                    draw_sparkline(ui, history, color, egui::vec2((width * 0.42).max(42.0), 26.0));
+                });
             });
         });
-    });
 }
 
 fn draw_sparkline(ui: &mut egui::Ui, values: &VecDeque<f64>, color: Color32, size: Vec2) {
@@ -1578,7 +1732,7 @@ fn planned_ghosts_from_emitters(emitters: &[EmitterObservation], cfg: &SignalCon
     out
 }
 
-fn normalized_waveform(samples: &[num_complex::Complex64], fs: f64, window_ms: f64, full_scale: f64, max_points: usize) -> Vec<[f64; 2]> {
+fn waveform_trace(samples: &[num_complex::Complex64], fs: f64, window_ms: f64, max_points: usize) -> Vec<[f64; 2]> {
     if samples.is_empty() || fs <= 0.0 {
         return Vec::new();
     }
@@ -1589,8 +1743,62 @@ fn normalized_waveform(samples: &[num_complex::Complex64], fs: f64, window_ms: f
         .iter()
         .step_by(stride)
         .enumerate()
-        .map(|(i, z)| [i as f64 * stride as f64 / fs * 1000.0, z.re / full_scale])
+        .map(|(i, z)| [i as f64 * stride as f64 / fs * 1000.0, z.re])
         .collect()
+}
+
+fn waveform_peak(points: &[[f64; 2]]) -> f64 {
+    points
+        .iter()
+        .map(|p| p[1].abs())
+        .filter(|v| v.is_finite())
+        .fold(0.0_f64, f64::max)
+}
+
+fn percentile_finite(values: &[f64], percentile: f64) -> Option<f64> {
+    let mut v: Vec<f64> = values.iter().copied().filter(|x| x.is_finite()).collect();
+    if v.is_empty() {
+        return None;
+    }
+    v.sort_by(|a, b| a.total_cmp(b));
+    let p = percentile.clamp(0.0, 1.0);
+    let idx = ((v.len().saturating_sub(1)) as f64 * p).round() as usize;
+    v.get(idx).copied()
+}
+
+/// Robust display-only spectral range. This does not alter the signal or analysis
+/// values; it only maps the real dBFS values into a useful visible range.
+fn robust_display_range(values: &[f64]) -> Option<(f64, f64)> {
+    let low = percentile_finite(values, 0.08)?;
+    let high = percentile_finite(values, 0.995)?;
+    let peak = values
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite())
+        .fold(f64::NEG_INFINITY, f64::max);
+    let mut ceil = high.max(peak - 3.0) + 4.0;
+    let mut floor = low - 8.0;
+    if !ceil.is_finite() || !floor.is_finite() {
+        return None;
+    }
+    let min_span = 55.0;
+    let max_span = 140.0;
+    let span = (ceil - floor).abs();
+    if span < min_span {
+        floor = ceil - min_span;
+    } else if span > max_span {
+        floor = ceil - max_span;
+    }
+    ceil = ceil.clamp(-300.0, 20.0);
+    floor = floor.clamp(-320.0, ceil - 20.0);
+    Some((floor, ceil))
+}
+
+fn smooth_value(current: f64, target: f64, alpha: f64) -> f64 {
+    if !current.is_finite() {
+        return target;
+    }
+    current + (target - current) * alpha.clamp(0.0, 1.0)
 }
 
 fn operator_colormap(t: f64) -> Color32 {

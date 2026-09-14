@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
 use std::process::{Child, Command, Stdio};
 use std::thread;
@@ -237,7 +238,9 @@ pub fn run_probe(cfg: &ResolvedConfig, seconds: f64) -> Result<()> {
     println!("Input     : {}:{} via {}", cfg.stream.group, cfg.stream.dst_port, cfg.stream.interface);
     println!("Expected  : {:.0} Sa/s", cfg.stream.sample_rate);
     let mut src = create_source(cfg)?;
-    let until = Instant::now() + Duration::from_secs_f64(seconds.max(0.5));
+    let requested = seconds.max(0.5);
+    let wall_start = Instant::now();
+    let until = wall_start + Duration::from_secs_f64(requested);
     let mut good = 0u64;
     let mut parse_errors = 0u64;
     let mut bytes = 0u64;
@@ -245,16 +248,34 @@ pub fn run_probe(cfg: &ResolvedConfig, seconds: f64) -> Result<()> {
     let mut sid_mismatches = 0u64;
     let mut class_mismatches = 0u64;
     let mut first = true;
+    let mut first_capture: Option<f64> = None;
+    let mut last_capture: Option<f64> = None;
+    let mut geometry_hist = BTreeMap::<(usize, usize), u64>::new();
+    let mut type_hist = BTreeMap::<u8, u64>::new();
+
     while Instant::now() < until {
         if let Some(ev) = src.read(Duration::from_millis(100))? {
             bytes += ev.raw.len() as u64;
+            if ev.capture_time.is_finite() {
+                first_capture.get_or_insert(ev.capture_time);
+                last_capture = Some(ev.capture_time);
+            }
             match VrtFrame::parse(&ev.raw) {
                 Ok(f) => {
                     good += 1;
+                    *geometry_hist.entry((ev.raw.len(), f.payload().len())).or_default() += 1;
+                    *type_hist.entry(f.packet_type).or_default() += 1;
                     if cfg.stream.packet_bytes.map(|n| n != ev.raw.len()).unwrap_or(false)
-                        || cfg.stream.data_bytes.map(|n| n != f.payload().len()).unwrap_or(false) { geometry_mismatches += 1; }
-                    if cfg.stream.stream_id.map(|sid| Some(sid) != f.stream_id()).unwrap_or(false) { sid_mismatches += 1; }
-                    if cfg.stream.class_id.map(|cid| Some(cid) != f.class_id()).unwrap_or(false) { class_mismatches += 1; }
+                        || cfg.stream.data_bytes.map(|n| n != f.payload().len()).unwrap_or(false)
+                    {
+                        geometry_mismatches += 1;
+                    }
+                    if cfg.stream.stream_id.map(|sid| Some(sid) != f.stream_id()).unwrap_or(false) {
+                        sid_mismatches += 1;
+                    }
+                    if cfg.stream.class_id.map(|cid| Some(cid) != f.class_id()).unwrap_or(false) {
+                        class_mismatches += 1;
+                    }
                     if first {
                         first = false;
                         let samples = decode_payload(&f, cfg.format, cfg.stream.iq).len();
@@ -274,20 +295,63 @@ pub fn run_probe(cfg: &ResolvedConfig, seconds: f64) -> Result<()> {
             }
         }
     }
-    let elapsed = seconds.max(0.5);
+
+    let wall_elapsed = wall_start.elapsed().as_secs_f64().max(1e-6);
+    let capture_span = match (first_capture, last_capture) {
+        (Some(a), Some(b)) if b > a => Some(b - a),
+        _ => None,
+    };
+    let packet_total = good + parse_errors;
+    let capture_pps = capture_span
+        .filter(|dt| *dt > 0.0 && packet_total > 1)
+        .map(|dt| (packet_total - 1) as f64 / dt);
+    let capture_mbps = capture_span
+        .filter(|dt| *dt > 0.0)
+        .map(|dt| bytes as f64 * 8.0 / dt / 1e6);
+    let samples_per_packet = cfg.stream.data_bytes
+        .map(|n| n / cfg.format.bytes_per_scalar() / (if cfg.stream.iq { 2 } else { 1 }))
+        .unwrap_or(0);
+
     let st = src.status();
     src.close();
     println!("\nRESULT");
     println!("  backend       : {}", st.backend);
     println!("  payload field : {}", st.payload_field.unwrap_or_else(|| "n/a".into()));
-    println!("  packets       : {}", good + parse_errors);
+    println!("  packets       : {}", packet_total);
     println!("  parsed        : {}", good);
     println!("  parse errors  : {}", parse_errors);
     println!("  geometry diff : {}", geometry_mismatches);
     println!("  SID mismatch  : {}", sid_mismatches);
     println!("  class mismatch: {}", class_mismatches);
-    println!("  receive rate  : {:.1} packets/s", (good + parse_errors) as f64 / elapsed);
-    println!("  throughput    : {:.3} Mbit/s", bytes as f64 * 8.0 / elapsed / 1e6);
+    println!("  wall rate     : {:.1} packets/s  (includes tshark startup/drain)", packet_total as f64 / wall_elapsed);
+    if let Some(dt) = capture_span {
+        println!("  capture span  : {:.3} s", dt);
+    }
+    if let Some(pps) = capture_pps {
+        println!("  wire rate     : {:.1} packets/s  (frame.time_epoch)", pps);
+        if samples_per_packet > 0 {
+            println!("  wire sample   : {:.0} Sa/s", pps * samples_per_packet as f64);
+        }
+    } else {
+        println!("  wire rate     : n/a (insufficient capture timestamps)");
+    }
+    if let Some(mbps) = capture_mbps {
+        println!("  throughput    : {:.3} Mbit/s  (capture-time basis)", mbps);
+    } else {
+        println!("  throughput    : {:.3} Mbit/s  (wall-time basis)", bytes as f64 * 8.0 / wall_elapsed / 1e6);
+    }
+
+    println!("\nGEOMETRY HISTOGRAM");
+    for ((packet_bytes, payload_bytes), count) in geometry_hist {
+        let marker = if cfg.stream.packet_bytes.map(|v| v == packet_bytes).unwrap_or(true)
+            && cfg.stream.data_bytes.map(|v| v == payload_bytes).unwrap_or(true)
+        { "expected" } else { "DIFF" };
+        println!("  {:>6} packets : {:>4} B packet / {:>4} B payload  [{}]", count, packet_bytes, payload_bytes, marker);
+    }
+    println!("PACKET TYPE HISTOGRAM");
+    for (ptype, count) in type_hist {
+        println!("  type {:>2}: {}", ptype, count);
+    }
     Ok(())
 }
 

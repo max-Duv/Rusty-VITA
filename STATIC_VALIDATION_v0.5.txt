@@ -1,0 +1,27 @@
+VITA-49 RF Chaos Workbench v0.5.0 — static validation
+
+Artifact environment limitation
+-------------------------------
+The artifact-generation container does not provide cargo/rustc, so this package was not compiled here.
+RS5 `./scripts/check.sh` and `./scripts/build_rhel8.sh` remain the authoritative compiler/test gates.
+
+Static checks completed
+-----------------------
+- Cargo.toml parsed; package version 0.5.0.
+- config/bx01.json parsed.
+- config/example_experiment.json parsed.
+- all shell scripts pass `bash -n`.
+- all Rust source files pass lexical delimiter/string/comment balance scanning.
+- GUI no longer references the removed normalized_waveform/full_scale display path.
+- GUI uses real-data auto range for waterfall/spectrum and raw decoded sample units for waveform.
+- TShark probe now separates wall-clock rate from frame.time_epoch wire rate and reports geometry/type histograms.
+- Process CPU display is normalized to total logical host capacity while retaining core-equivalent usage.
+
+Required on RS5
+---------------
+1. source "$HOME/.cargo/env"
+2. ./scripts/check.sh
+3. ./scripts/build_rhel8.sh
+4. sudo -v
+5. ./scripts/probe_bx01.sh 30
+6. ./scripts/run_bx01.sh

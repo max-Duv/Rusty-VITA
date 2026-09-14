@@ -85,7 +85,8 @@ impl AnalysisEngine {
 
         let detections = detect_emitters(&clean_spectrum, detection_threshold_db.max(3.0), max_emitters.max(1));
         self.update_tracks(&detections, rbw_hz / 1000.0, now_epoch);
-        let emitters = self.current_tracks(now_epoch);
+        let mut emitters = self.current_tracks(now_epoch);
+        emitters.truncate(max_emitters.max(1));
 
         let clean_stats = SignalStatistics {
             total_power_dbfs: rms_dbfs(clean_samples, fmt),
@@ -211,7 +212,19 @@ fn detect_emitters(trace: &SpectrumTrace, threshold_above_median_db: f64, max_co
             && y >= trace.dbfs[i - 2]
             && y >= trace.dbfs[i + 2]
         {
-            candidates.push((i, y));
+            // Require local prominence as well as global elevation over the
+            // robust floor. This rejects FFT-bin texture/noise maxima that were
+            // cluttering the operator table with dozens of "emitters".
+            let left = trace.dbfs[i.saturating_sub(8)..i.saturating_sub(2)]
+                .iter().copied().filter(|v| v.is_finite()).fold(f64::NEG_INFINITY, f64::max);
+            let right = trace.dbfs[(i + 3).min(n)..(i + 9).min(n)]
+                .iter().copied().filter(|v| v.is_finite()).fold(f64::NEG_INFINITY, f64::max);
+            let shoulder = left.max(right);
+            let prominence = y - shoulder;
+            let required_prominence = 4.5_f64.max(threshold_above_median_db * 0.18);
+            if shoulder.is_finite() && prominence >= required_prominence {
+                candidates.push((i, y));
+            }
         }
     }
     candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
